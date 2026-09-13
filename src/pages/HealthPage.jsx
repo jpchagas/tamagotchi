@@ -4,6 +4,7 @@ import Avatar from '@mui/material/Avatar'
 import Card from '@mui/material/Card'
 import IconButton from '@mui/material/IconButton'
 import NotificationsNoneIcon from '@mui/icons-material/NotificationsNone'
+import LogoutIcon from '@mui/icons-material/Logout'
 import ChevronRightIcon from '@mui/icons-material/ChevronRight'
 import FavoriteIcon from '@mui/icons-material/Favorite'
 import PsychologyIcon from '@mui/icons-material/Psychology'
@@ -43,7 +44,7 @@ const CONDITIONS = [
   },
 ]
 
-export default function HealthPage({ userName = 'André', onOpenCondition }) {
+export default function HealthPage({ userName = 'Paciente', onOpenCondition, onLogout }) {
   return (
     <Box sx={{ p: 2, pb: 10, backgroundColor: '#f7f5fa', minHeight: '100vh' }}>
       {/* Header */}
@@ -59,6 +60,9 @@ export default function HealthPage({ userName = 'André', onOpenCondition }) {
         </Box>
         <IconButton>
           <NotificationsNoneIcon sx={{ color: '#2b2338' }} />
+        </IconButton>
+        <IconButton onClick={onLogout} aria-label="Sair">
+          <LogoutIcon sx={{ color: '#2b2338' }} />
         </IconButton>
       </Box>
 
