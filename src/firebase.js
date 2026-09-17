@@ -18,7 +18,7 @@ const firebaseConfig = {
   storageBucket: "tamagotchi-459a6.firebasestorage.app",
   messagingSenderId: "312283992743",
   appId: "1:312283992743:web:2b77ee85147fc51562c182"
-};
+}
 
 export const firebaseApp = initializeApp(firebaseConfig)
 export const auth = getAuth(firebaseApp)

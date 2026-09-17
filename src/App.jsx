@@ -23,20 +23,13 @@ import logo from './assets/logo.png'
 import { subscribeToAuthChanges, logout } from './services/authService'
 import { getUserProfile } from './services/profileService'
 
-const SECTION_COMPONENTS = {
-  saude: HealthPage,
-  linhaDoTempo: TimelinePage,
-  plano: PlanPage,
-  equipe: TeamPage,
-}
-
 const DOCTOR_SECTION_COMPONENTS = {
   exames: ExamesPage,
   prontuario: ProntuarioPage,
   agenda: AgendaPage,
 }
 
-function PatientApp({ profile, onLogout }) {
+function PatientApp({ profile, uid, onLogout }) {
   const [section, setSection] = useState('saude')
   const [openCondition, setOpenCondition] = useState(null)
   const firstName = profile?.fullName?.split(' ')[0] || 'Paciente'
@@ -45,15 +38,14 @@ function PatientApp({ profile, onLogout }) {
     return <MetricPage conditionId={openCondition} onBack={() => setOpenCondition(null)} />
   }
 
-  const ActiveSection = SECTION_COMPONENTS[section]
-
   return (
     <Box sx={{ minHeight: '100vh', backgroundColor: '#f7f5fa' }}>
-      {section === 'saude' ? (
-        <HealthPage userName={firstName} onOpenCondition={setOpenCondition} onLogout={onLogout} />
-      ) : (
-        <ActiveSection />
+      {section === 'saude' && (
+        <HealthPage userName={firstName} uid={uid} onOpenCondition={setOpenCondition} onLogout={onLogout} />
       )}
+      {section === 'linhaDoTempo' && <TimelinePage uid={uid} />}
+      {section === 'plano' && <PlanPage uid={uid} />}
+      {section === 'equipe' && <TeamPage uid={uid} />}
       <AppBottomNav value={section} onChange={setSection} />
     </Box>
   )
@@ -213,6 +205,6 @@ export default function App() {
   return role === 'doctor' ? (
     <DoctorApp profile={profile} onLogout={handleLogout} />
   ) : (
-    <PatientApp profile={profile} onLogout={handleLogout} />
+    <PatientApp profile={profile} uid={authUser?.uid} onLogout={handleLogout} />
   )
 }

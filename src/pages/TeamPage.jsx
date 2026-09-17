@@ -1,19 +1,56 @@
+import { useState, useEffect } from 'react'
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
 import Avatar from '@mui/material/Avatar'
 import Card from '@mui/material/Card'
 import Button from '@mui/material/Button'
 import IconButton from '@mui/material/IconButton'
+import Skeleton from '@mui/material/Skeleton'
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'
-import ChatBubbleOutlinedIcon from "@mui/icons-material/ChatBubbleOutlined";
+import ChatBubbleOutlinedIcon from "@mui/icons-material/ChatBubbleOutlined"
+import { getCareTeam, groupByMemberType } from '../services/careTeamService'
 
-const TEAM = [
-  { name: 'Dr. Ricardo Almeida', role: 'Cardiologista', crm: 'CRM 12345' },
-  { name: 'Dra. Mariana Costa', role: 'Oncologista', crm: 'CRM 67890' },
-  { name: 'Dr. Felipe Martins', role: 'Clínico geral', crm: 'CRM 54321' },
-]
+const SECTION_LABELS = {
+  doctor: 'Médicos',
+  nurse: 'Enfermagem',
+  family: 'Família',
+}
 
-export default function TeamPage({ onBack }) {
+function subtitleFor(member) {
+  if (member.memberType === 'doctor') return `${member.specialty || ''} · ${member.crm || ''}`.trim()
+  if (member.memberType === 'nurse') return member.specialty || 'Enfermagem'
+  if (member.memberType === 'family') return member.relationship || 'Família'
+  return ''
+}
+
+export default function TeamPage({ uid, onBack }) {
+  const [grouped, setGrouped] = useState(null)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!uid) {
+      setError('Usuário não identificado.')
+      return
+    }
+    let cancelled = false
+
+    getCareTeam(uid)
+      .then((members) => {
+        if (!cancelled) setGrouped(groupByMemberType(members))
+      })
+      .catch(() => {
+        if (!cancelled) setError('Não foi possível carregar sua equipe.')
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [uid])
+
+  const sections = grouped
+    ? ['doctor', 'nurse', 'family'].filter((type) => grouped[type].length > 0)
+    : []
+
   return (
     <Box sx={{ p: 2, pb: 10, backgroundColor: '#f7f5fa', minHeight: '100vh' }}>
       <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
@@ -30,30 +67,56 @@ export default function TeamPage({ onBack }) {
         </Box>
       </Box>
 
-      <Typography variant="body2" sx={{ color: '#7a7186', mb: 1.5 }}>
-        Profissionais que acompanham sua jornada.
-      </Typography>
+      {error && (
+        <Typography variant="body2" sx={{ color: '#d64545', mb: 2 }}>
+          {error}
+        </Typography>
+      )}
 
-      {TEAM.map((doc) => (
-        <Card
-          key={doc.name}
-          sx={{
-            borderRadius: 4,
-            p: 1.6,
-            mb: 1.2,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 1.5,
-          }}
-        >
-          <Avatar sx={{ width: 48, height: 48 }}>👤</Avatar>
-          <Box>
-            <Typography sx={{ fontWeight: 600, color: '#2b2338' }}>{doc.name}</Typography>
-            <Typography variant="body2" sx={{ color: '#7a7186' }}>{doc.role}</Typography>
-            <Typography variant="caption" sx={{ color: '#b3aebb' }}>{doc.crm}</Typography>
+      {!grouped && !error && (
+        <>
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} variant="rounded" sx={{ height: 72, borderRadius: 4, mb: 1.2 }} />
+          ))}
+        </>
+      )}
+
+      {grouped && sections.length === 0 && !error && (
+        <Typography variant="body2" sx={{ color: '#7a7186', mb: 2 }}>
+          Nenhum profissional ou familiar adicionado ainda.
+        </Typography>
+      )}
+
+      {grouped &&
+        sections.map((type) => (
+          <Box key={type} sx={{ mb: 2 }}>
+            <Typography variant="caption" sx={{ color: '#b3aebb', fontWeight: 700 }}>
+              {SECTION_LABELS[type].toUpperCase()}
+            </Typography>
+            {grouped[type].map((member) => (
+              <Card
+                key={member.id}
+                sx={{
+                  borderRadius: 4,
+                  p: 1.6,
+                  mt: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 1.5,
+                }}
+              >
+                <Avatar sx={{ width: 48, height: 48 }}>👤</Avatar>
+                <Box>
+                  <Typography sx={{ fontWeight: 600, color: '#2b2338' }}>{member.name}</Typography>
+                  <Typography variant="body2" sx={{ color: '#7a7186' }}>{subtitleFor(member)}</Typography>
+                  {member.phone && (
+                    <Typography variant="caption" sx={{ color: '#b3aebb' }}>{member.phone}</Typography>
+                  )}
+                </Box>
+              </Card>
+            ))}
           </Box>
-        </Card>
-      ))}
+        ))}
 
       <Button
         fullWidth

@@ -1,8 +1,10 @@
+import { useState, useEffect } from 'react'
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
 import Avatar from '@mui/material/Avatar'
 import Card from '@mui/material/Card'
 import IconButton from '@mui/material/IconButton'
+import Skeleton from '@mui/material/Skeleton'
 import NotificationsNoneIcon from '@mui/icons-material/NotificationsNone'
 import LogoutIcon from '@mui/icons-material/Logout'
 import ChevronRightIcon from '@mui/icons-material/ChevronRight'
@@ -12,6 +14,8 @@ import CoronavirusIcon from '@mui/icons-material/Coronavirus'
 import SpaIcon from '@mui/icons-material/Spa'
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth'
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward'
+import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward'
+import { getAllMetricReadingsGrouped, getLatestAndPrevious } from '../services/metricsService'
 
 const CONDITIONS = [
   {
@@ -44,7 +48,44 @@ const CONDITIONS = [
   },
 ]
 
-export default function HealthPage({ userName = 'Paciente', onOpenCondition, onLogout }) {
+// Metrics shown in "O que mudou", in display order, with formatting rules.
+const CHANGE_METRICS = [
+  { key: 'apob', label: 'ApoB', mode: 'percent' },
+  { key: 'gorduraVisceral', label: 'Gordura visceral', mode: 'percent' },
+  { key: 'hba1c', label: 'HbA1c', mode: 'stable' },
+]
+
+function computeChange(readings) {
+  const { latest, previous } = getLatestAndPrevious(readings)
+  if (!latest || !previous) return null
+  const diff = latest.value - previous.value
+  const percent = previous.value !== 0 ? (diff / previous.value) * 100 : 0
+  return { diff, percent, direction: diff < 0 ? 'down' : diff > 0 ? 'up' : 'flat' }
+}
+
+export default function HealthPage({ userName = 'Paciente', uid, onOpenCondition, onLogout }) {
+  const [readingsByMetric, setReadingsByMetric] = useState(null)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!uid) return
+    let cancelled = false
+
+    getAllMetricReadingsGrouped(uid)
+      .then((grouped) => {
+        if (!cancelled) setReadingsByMetric(grouped)
+      })
+      .catch(() => {
+        if (!cancelled) setError('Não foi possível carregar seus dados de saúde.')
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [uid])
+
+  const sonoChange = readingsByMetric ? computeChange(readingsByMetric.sono) : null
+
   return (
     <Box sx={{ p: 2, pb: 10, backgroundColor: '#f7f5fa', minHeight: '100vh' }}>
       {/* Header */}
@@ -110,19 +151,58 @@ export default function HealthPage({ userName = 'Paciente', onOpenCondition, onL
         <Typography sx={{ fontWeight: 700, color: '#2b2338', mb: 1.5 }}>
           O que mudou
         </Typography>
-        <Box sx={{ display: 'flex', gap: 1.5, mb: 1.5 }}>
-          <MetricTile label="ApoB" value="14%" />
-          <MetricTile label="Gordura visceral" value="8%" />
-          <MetricTile label="HbA1c" value="Estável" flat />
-        </Box>
+
+        {error && (
+          <Typography variant="body2" sx={{ color: '#d64545', mb: 1 }}>
+            {error}
+          </Typography>
+        )}
+
+        {!readingsByMetric && !error ? (
+          <Box sx={{ display: 'flex', gap: 1.5, mb: 1.5 }}>
+            {[0, 1, 2].map((i) => (
+              <Skeleton key={i} variant="rounded" sx={{ flex: 1, height: 64, borderRadius: 3 }} />
+            ))}
+          </Box>
+        ) : (
+          <Box sx={{ display: 'flex', gap: 1.5, mb: 1.5 }}>
+            {CHANGE_METRICS.map((m) => {
+              const change = readingsByMetric ? computeChange(readingsByMetric[m.key]) : null
+              if (!change) {
+                return <MetricTile key={m.key} label={m.label} value="—" flat />
+              }
+              if (m.mode === 'stable' && change.direction === 'flat') {
+                return <MetricTile key={m.key} label={m.label} value="Estável" flat />
+              }
+              const displayValue = `${Math.abs(Math.round(change.percent))}%`
+              return (
+                <MetricTile
+                  key={m.key}
+                  label={m.label}
+                  value={displayValue}
+                  direction={change.direction}
+                />
+              )
+            })}
+          </Box>
+        )}
+
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <Typography variant="body2" sx={{ color: '#7a7186' }}>Sono</Typography>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.3 }}>
-            <ArrowDownwardIcon sx={{ fontSize: 14, color: '#3ba55c' }} />
-            <Typography variant="body2" sx={{ color: '#3ba55c', fontWeight: 600 }}>
-              37 min/noite
-            </Typography>
-          </Box>
+          {sonoChange ? (
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.3 }}>
+              {sonoChange.direction === 'down' ? (
+                <ArrowDownwardIcon sx={{ fontSize: 14, color: '#3ba55c' }} />
+              ) : (
+                <ArrowUpwardIcon sx={{ fontSize: 14, color: '#3ba55c' }} />
+              )}
+              <Typography variant="body2" sx={{ color: '#3ba55c', fontWeight: 600 }}>
+                {Math.abs(Math.round(sonoChange.diff))} min/noite
+              </Typography>
+            </Box>
+          ) : (
+            <Typography variant="body2" sx={{ color: '#b3aebb' }}>—</Typography>
+          )}
         </Box>
       </Card>
 
@@ -154,7 +234,8 @@ export default function HealthPage({ userName = 'Paciente', onOpenCondition, onL
   )
 }
 
-function MetricTile({ label, value, flat }) {
+function MetricTile({ label, value, direction, flat }) {
+  const isDown = direction === 'down'
   return (
     <Box
       sx={{
@@ -169,7 +250,11 @@ function MetricTile({ label, value, flat }) {
         {label}
       </Typography>
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 0.3 }}>
-        {!flat && <ArrowDownwardIcon sx={{ fontSize: 14, color: '#3ba55c' }} />}
+        {!flat && (isDown ? (
+          <ArrowDownwardIcon sx={{ fontSize: 14, color: '#3ba55c' }} />
+        ) : (
+          <ArrowUpwardIcon sx={{ fontSize: 14, color: '#3ba55c' }} />
+        ))}
         <Typography sx={{ fontWeight: 700, color: '#3ba55c' }}>{value}</Typography>
       </Box>
     </Box>
