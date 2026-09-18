@@ -5,7 +5,9 @@ export { formatRelativeDate } from './dateUtils'
 // Collection: users/{uid}/conducts/{conductId}
 // Fields: title, why, timeframe ('agora' | 'proximos90' | 'esteAno' | 'longoPrazo'),
 //         type ('medication' | 'diet' | 'exercise' | 'followup'), dueDate,
-//         prescribedBy (careTeam member id, optional), status ('pending' | 'done')
+//         status ('pending' | 'done')
+// Optional (set when a doctor attaches a prescription PDF):
+//         doctorUid, doctorName, attachmentUrl, attachmentFileName
 
 export async function getConducts(uid) {
   const q = query(collection(db, 'users', uid, 'conducts'), orderBy('dueDate', 'asc'))

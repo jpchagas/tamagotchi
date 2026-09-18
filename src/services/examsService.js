@@ -4,7 +4,9 @@ export { formatRelativeDate } from './dateUtils'
 
 // Collection: users/{uid}/exams/{examId}
 // Fields: title, status ('solicitado' | 'em_andamento' | 'realizado'),
-//         priority ('prioritario' | 'rotina'), scheduledDate, requestedBy (careTeam member id, optional)
+//         priority ('prioritario' | 'rotina'), scheduledDate
+// Optional (set when a doctor attaches a prescription PDF):
+//         doctorUid, doctorName, attachmentUrl, attachmentFileName
 
 export async function getExams(uid) {
   const q = query(collection(db, 'users', uid, 'exams'), orderBy('scheduledDate', 'asc'))

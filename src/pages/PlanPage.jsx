@@ -15,6 +15,7 @@ import ScienceIcon from '@mui/icons-material/Science'
 import EventIcon from '@mui/icons-material/Event'
 import VaccinesIcon from '@mui/icons-material/Vaccines'
 import BloodtypeIcon from '@mui/icons-material/Bloodtype'
+import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined'
 import { getConducts, groupByTimeframe, formatRelativeDate as conductRelativeDate } from '../services/conductsService'
 import { getExams, groupByStatus, formatRelativeDate as examRelativeDate } from '../services/examsService'
 
@@ -162,6 +163,18 @@ export default function PlanPage({ uid }) {
                     <Typography variant="body2" sx={{ color: '#7a7186' }}>{item.why}</Typography>
                   </>
                 )}
+                {item.attachmentUrl && (
+                  <Button
+                    href={item.attachmentUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    startIcon={<DescriptionOutlinedIcon />}
+                    size="small"
+                    sx={{ mt: 1, color: '#634879', textTransform: 'none', p: 0, minWidth: 0 }}
+                  >
+                    Ver receita{item.doctorName ? ` · ${item.doctorName}` : ''}
+                  </Button>
+                )}
               </Card>
             ))
           )}
@@ -207,20 +220,31 @@ export default function PlanPage({ uid }) {
             exams[agendaTab].map((item) => {
               const priority = PRIORITY_STYLE[item.priority] || PRIORITY_STYLE.rotina
               return (
-                <Card
-                  key={item.id}
-                  sx={{ borderRadius: 4, p: 1.6, mb: 1.2, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
-                >
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.2 }}>
-                    {EXAM_ICONS[item.icon] || <ScienceIcon sx={{ color: '#634879' }} />}
-                    <Box>
-                      <Typography sx={{ fontWeight: 600, color: '#2b2338' }}>{item.title}</Typography>
-                      <Typography variant="body2" sx={{ color: '#7a7186' }}>
-                        {examRelativeDate(item.scheduledDate)}
-                      </Typography>
+                <Card key={item.id} sx={{ borderRadius: 4, p: 1.6, mb: 1.2 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.2 }}>
+                      {EXAM_ICONS[item.icon] || <ScienceIcon sx={{ color: '#634879' }} />}
+                      <Box>
+                        <Typography sx={{ fontWeight: 600, color: '#2b2338' }}>{item.title}</Typography>
+                        <Typography variant="body2" sx={{ color: '#7a7186' }}>
+                          {examRelativeDate(item.scheduledDate)}
+                        </Typography>
+                      </Box>
                     </Box>
+                    <Chip label={priority.label} size="small" sx={{ backgroundColor: priority.bg, color: priority.color, fontWeight: 600 }} />
                   </Box>
-                  <Chip label={priority.label} size="small" sx={{ backgroundColor: priority.bg, color: priority.color, fontWeight: 600 }} />
+                  {item.attachmentUrl && (
+                    <Button
+                      href={item.attachmentUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      startIcon={<DescriptionOutlinedIcon />}
+                      size="small"
+                      sx={{ mt: 1, color: '#634879', textTransform: 'none', p: 0, minWidth: 0 }}
+                    >
+                      Ver receita{item.doctorName ? ` · ${item.doctorName}` : ''}
+                    </Button>
+                  )}
                 </Card>
               )
             })

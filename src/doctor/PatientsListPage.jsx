@@ -11,6 +11,8 @@ import Autocomplete from '@mui/material/Autocomplete'
 import TextField from '@mui/material/TextField'
 import CircularProgress from '@mui/material/CircularProgress'
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'
+import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined'
+import SendPrescriptionPage from './SendPrescriptionPage'
 import {
   getDoctorPatients,
   requestPatientDoctorLink,
@@ -31,6 +33,7 @@ export default function PatientsListPage({ doctorUid, doctorProfile, onBack }) {
   const [selectedPatient, setSelectedPatient] = useState(null)
   const [linking, setLinking] = useState(false)
   const [respondingTo, setRespondingTo] = useState(null)
+  const [sendingPrescriptionTo, setSendingPrescriptionTo] = useState(null)
 
   const loadPatients = () => {
     if (!doctorUid) return
@@ -93,6 +96,17 @@ export default function PatientsListPage({ doctorUid, doctorProfile, onBack }) {
 
   const alreadyKnownUids = new Set(all.map((p) => p.patientUid))
   const availablePatients = patientOptions.filter((p) => !alreadyKnownUids.has(p.uid))
+
+  if (sendingPrescriptionTo) {
+    return (
+      <SendPrescriptionPage
+        doctorUid={doctorUid}
+        doctorProfile={doctorProfile}
+        patient={sendingPrescriptionTo}
+        onBack={() => setSendingPrescriptionTo(null)}
+      />
+    )
+  }
 
   return (
     <Box sx={{ p: 2, pb: 6, backgroundColor: '#f7f5fa', minHeight: '100vh' }}>
@@ -213,10 +227,15 @@ export default function PatientsListPage({ doctorUid, doctorProfile, onBack }) {
       {confirmedPatients.map((p) => (
         <Card
           key={p.id}
-          sx={{ borderRadius: 4, p: 1.6, mb: 1.2, display: 'flex', alignItems: 'center', gap: 1.5 }}
+          sx={{ borderRadius: 4, p: 1.6, mb: 1.2, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
         >
-          <Avatar sx={{ width: 44, height: 44 }}>👤</Avatar>
-          <Typography sx={{ fontWeight: 600, color: '#2b2338' }}>{p.name}</Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+            <Avatar sx={{ width: 44, height: 44 }}>👤</Avatar>
+            <Typography sx={{ fontWeight: 600, color: '#2b2338' }}>{p.name}</Typography>
+          </Box>
+          <IconButton onClick={() => setSendingPrescriptionTo(p)} aria-label="Enviar receita" sx={{ color: '#634879' }}>
+            <DescriptionOutlinedIcon />
+          </IconButton>
         </Card>
       ))}
 
