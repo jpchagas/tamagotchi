@@ -18,10 +18,12 @@ import DoctorHomePage from './doctor/DoctorHomePage'
 import ExamesPage from './doctor/ExamesPage'
 import ProntuarioPage from './doctor/ProntuarioPage'
 import AgendaPage from './doctor/AgendaPage'
+import PatientsListPage from './doctor/PatientsListPage'
 import DoctorBottomNav from './doctor/DoctorBottomNav'
 import logo from './assets/logo.png'
 import { subscribeToAuthChanges, logout } from './services/authService'
 import { getUserProfile } from './services/profileService'
+import { subscribeToIncomingRequestsForPatient, subscribeToIncomingRequestsForDoctor } from './services/careTeamService'
 
 const DOCTOR_SECTION_COMPONENTS = {
   exames: ExamesPage,
@@ -32,7 +34,16 @@ const DOCTOR_SECTION_COMPONENTS = {
 function PatientApp({ profile, uid, onLogout }) {
   const [section, setSection] = useState('saude')
   const [openCondition, setOpenCondition] = useState(null)
+  const [pendingRequestsCount, setPendingRequestsCount] = useState(0)
   const firstName = profile?.fullName?.split(' ')[0] || 'Paciente'
+
+  useEffect(() => {
+    if (!uid) return
+    const unsubscribe = subscribeToIncomingRequestsForPatient(uid, (requests) => {
+      setPendingRequestsCount(requests.length)
+    })
+    return unsubscribe
+  }, [uid])
 
   if (openCondition) {
     return <MetricPage conditionId={openCondition} onBack={() => setOpenCondition(null)} />
@@ -41,28 +52,68 @@ function PatientApp({ profile, uid, onLogout }) {
   return (
     <Box sx={{ minHeight: '100vh', backgroundColor: '#f7f5fa' }}>
       {section === 'saude' && (
-        <HealthPage userName={firstName} uid={uid} onOpenCondition={setOpenCondition} onLogout={onLogout} />
+        <HealthPage
+          userName={firstName}
+          uid={uid}
+          onOpenCondition={setOpenCondition}
+          onLogout={onLogout}
+          pendingRequestsCount={pendingRequestsCount}
+        />
       )}
       {section === 'linhaDoTempo' && <TimelinePage uid={uid} />}
       {section === 'plano' && <PlanPage uid={uid} />}
-      {section === 'equipe' && <TeamPage uid={uid} />}
-      <AppBottomNav value={section} onChange={setSection} />
+      {section === 'equipe' && <TeamPage uid={uid} profile={profile} />}
+      <AppBottomNav
+        value={section}
+        onChange={setSection}
+        badgeCounts={{ equipe: pendingRequestsCount }}
+      />
     </Box>
   )
 }
 
-function DoctorApp({ profile, onLogout }) {
+function DoctorApp({ profile, uid, onLogout }) {
   const [section, setSection] = useState('pacientes')
+  const [viewingPatients, setViewingPatients] = useState(false)
+  const [pendingRequestsCount, setPendingRequestsCount] = useState(0)
   const ActiveSection = DOCTOR_SECTION_COMPONENTS[section]
+
+  useEffect(() => {
+    if (!uid) return
+    const unsubscribe = subscribeToIncomingRequestsForDoctor(uid, (requests) => {
+      setPendingRequestsCount(requests.length)
+    })
+    return unsubscribe
+  }, [uid])
+
+  if (viewingPatients) {
+    return (
+      <PatientsListPage
+        doctorUid={uid}
+        doctorProfile={profile}
+        onBack={() => setViewingPatients(false)}
+      />
+    )
+  }
 
   return (
     <Box sx={{ minHeight: '100vh', backgroundColor: '#f7f5fa' }}>
       {section === 'pacientes' ? (
-        <DoctorHomePage doctorName={profile?.fullName?.split(' ')[0]} onLogout={onLogout} />
+        <DoctorHomePage
+          doctorName={profile?.fullName?.split(' ')[0]}
+          uid={uid}
+          onLogout={onLogout}
+          onOpenPatients={() => setViewingPatients(true)}
+          pendingRequestsCount={pendingRequestsCount}
+        />
       ) : (
         <ActiveSection />
       )}
-      <DoctorBottomNav value={section} onChange={setSection} />
+      <DoctorBottomNav
+        value={section}
+        onChange={setSection}
+        badgeCounts={{ pacientes: pendingRequestsCount }}
+      />
     </Box>
   )
 }
@@ -203,7 +254,7 @@ export default function App() {
   }
 
   return role === 'doctor' ? (
-    <DoctorApp profile={profile} onLogout={handleLogout} />
+    <DoctorApp profile={profile} uid={authUser?.uid} onLogout={handleLogout} />
   ) : (
     <PatientApp profile={profile} uid={authUser?.uid} onLogout={handleLogout} />
   )

@@ -1,7 +1,9 @@
+import { useState, useEffect } from 'react'
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
 import Card from '@mui/material/Card'
 import IconButton from '@mui/material/IconButton'
+import Badge from '@mui/material/Badge'
 import NotificationsNoneIcon from '@mui/icons-material/NotificationsNone'
 import LogoutIcon from '@mui/icons-material/Logout'
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward'
@@ -9,6 +11,7 @@ import ScienceOutlinedIcon from '@mui/icons-material/ScienceOutlined'
 import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined'
 import EventRepeatOutlinedIcon from '@mui/icons-material/EventRepeatOutlined'
 import AssignmentOutlinedIcon from '@mui/icons-material/AssignmentOutlined'
+import { getDoctorPatients } from '../services/careTeamService'
 
 const ALERTS = [
   { icon: <ScienceOutlinedIcon sx={{ color: '#634879' }} />, label: 'ApoB acima da meta', count: '6 pacientes' },
@@ -17,9 +20,12 @@ const ALERTS = [
   { icon: <AssignmentOutlinedIcon sx={{ color: '#634879' }} />, label: 'Prescrições a revisar', count: '2 pacientes' },
 ]
 
-function StatCard({ label, value, delta, deltaColor = '#3ba55c' }) {
+function StatCard({ label, value, delta, deltaColor = '#3ba55c', onClick }) {
   return (
-    <Card sx={{ borderRadius: 4, p: 2, flex: 1 }}>
+    <Card
+      onClick={onClick}
+      sx={{ borderRadius: 4, p: 2, flex: 1, cursor: onClick ? 'pointer' : 'default' }}
+    >
       <Typography variant="body2" sx={{ color: '#7a7186', mb: 0.5 }}>
         {label}
       </Typography>
@@ -38,7 +44,18 @@ function StatCard({ label, value, delta, deltaColor = '#3ba55c' }) {
   )
 }
 
-export default function DoctorHomePage({ doctorName = 'Ricardo', onLogout }) {
+export default function DoctorHomePage({ doctorName = 'Ricardo', uid, onLogout, onOpenPatients, pendingRequestsCount = 0 }) {
+  const [patientCount, setPatientCount] = useState(null)
+
+  useEffect(() => {
+    if (!uid) return
+    getDoctorPatients(uid)
+      .then((patients) => setPatientCount(patients.filter((p) => p.status !== 'pending').length))
+      .catch(() => {
+        // Non-fatal — falls back to the placeholder dash below.
+      })
+  }, [uid])
+
   return (
     <Box sx={{ p: 2, pb: 10, backgroundColor: '#f7f5fa', minHeight: '100vh' }}>
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2, mt: 1 }}>
@@ -52,7 +69,9 @@ export default function DoctorHomePage({ doctorName = 'Ricardo', onLogout }) {
         </Box>
         <Box>
           <IconButton>
-            <NotificationsNoneIcon sx={{ color: '#2b2338' }} />
+            <Badge badgeContent={pendingRequestsCount} color="error" max={9}>
+              <NotificationsNoneIcon sx={{ color: '#2b2338' }} />
+            </Badge>
           </IconButton>
           <IconButton onClick={onLogout} aria-label="Sair">
             <LogoutIcon sx={{ color: '#2b2338' }} />
@@ -61,7 +80,11 @@ export default function DoctorHomePage({ doctorName = 'Ricardo', onLogout }) {
       </Box>
 
       <Box sx={{ display: 'flex', gap: 1.5, mb: 1.5 }}>
-        <StatCard label="Pacientes em acompanhamento" value="248" delta="12% vs. mês anterior" />
+        <StatCard
+          label="Pacientes em acompanhamento"
+          value={patientCount !== null ? String(patientCount) : '—'}
+          onClick={onOpenPatients}
+        />
         <StatCard label="Pendências" value="37" delta="1,5% do total" deltaColor="#e08a3c" />
       </Box>
 

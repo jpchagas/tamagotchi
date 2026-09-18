@@ -6,9 +6,20 @@ import Card from '@mui/material/Card'
 import Button from '@mui/material/Button'
 import IconButton from '@mui/material/IconButton'
 import Skeleton from '@mui/material/Skeleton'
+import Chip from '@mui/material/Chip'
+import Autocomplete from '@mui/material/Autocomplete'
+import TextField from '@mui/material/TextField'
+import CircularProgress from '@mui/material/CircularProgress'
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'
 import ChatBubbleOutlinedIcon from "@mui/icons-material/ChatBubbleOutlined"
-import { getCareTeam, groupByMemberType } from '../services/careTeamService'
+import {
+  getCareTeam,
+  groupByMemberType,
+  requestPatientDoctorLink,
+  confirmPatientDoctorLink,
+  declinePatientDoctorLink,
+} from '../services/careTeamService'
+import { listDoctors } from '../services/userDirectoryService'
 
 const SECTION_LABELS = {
   doctor: 'Médicos',
@@ -23,33 +34,90 @@ function subtitleFor(member) {
   return ''
 }
 
-export default function TeamPage({ uid, onBack }) {
+// Manually-added members (family, nurse, or doctors seeded before this
+// feature existed) have no status field — treat that as already confirmed.
+const isConfirmed = (m) => m.status !== 'pending'
+const isIncomingRequest = (m) => m.status === 'pending' && m.initiatedBy === 'doctor'
+const isOutgoingRequest = (m) => m.status === 'pending' && m.initiatedBy === 'patient'
+
+export default function TeamPage({ uid, profile, onBack }) {
   const [grouped, setGrouped] = useState(null)
   const [error, setError] = useState('')
+
+  const [doctorOptions, setDoctorOptions] = useState([])
+  const [selectedDoctor, setSelectedDoctor] = useState(null)
+  const [linking, setLinking] = useState(false)
+  const [respondingTo, setRespondingTo] = useState(null)
+
+  const loadCareTeam = () => {
+    if (!uid) return
+    getCareTeam(uid)
+      .then((members) => setGrouped(groupByMemberType(members)))
+      .catch(() => setError('Não foi possível carregar sua equipe.'))
+  }
 
   useEffect(() => {
     if (!uid) {
       setError('Usuário não identificado.')
       return
     }
-    let cancelled = false
-
-    getCareTeam(uid)
-      .then((members) => {
-        if (!cancelled) setGrouped(groupByMemberType(members))
-      })
-      .catch(() => {
-        if (!cancelled) setError('Não foi possível carregar sua equipe.')
-      })
-
-    return () => {
-      cancelled = true
-    }
+    loadCareTeam()
   }, [uid])
 
-  const sections = grouped
-    ? ['doctor', 'nurse', 'family'].filter((type) => grouped[type].length > 0)
+  useEffect(() => {
+    listDoctors()
+      .then(setDoctorOptions)
+      .catch(() => {})
+  }, [])
+
+  const handleAddDoctor = async () => {
+    if (!selectedDoctor || !uid || !profile) return
+    setLinking(true)
+    try {
+      await requestPatientDoctorLink({
+        patientUid: uid,
+        patientProfile: profile,
+        doctorUid: selectedDoctor.uid,
+        doctorProfile: selectedDoctor,
+        initiatedBy: 'patient',
+      })
+      setSelectedDoctor(null)
+      loadCareTeam()
+    } catch {
+      setError('Não foi possível enviar o convite. Tente novamente.')
+    } finally {
+      setLinking(false)
+    }
+  }
+
+  const handleRespond = async (doctorUid, accept) => {
+    setRespondingTo(doctorUid)
+    try {
+      if (accept) await confirmPatientDoctorLink(uid, doctorUid)
+      else await declinePatientDoctorLink(uid, doctorUid)
+      loadCareTeam()
+    } catch {
+      setError('Não foi possível processar sua resposta. Tente novamente.')
+    } finally {
+      setRespondingTo(null)
+    }
+  }
+
+  const doctors = grouped?.doctor || []
+  const incomingRequests = doctors.filter(isIncomingRequest)
+  const confirmedByType = grouped
+    ? {
+        doctor: doctors.filter(isConfirmed),
+        nurse: (grouped.nurse || []).filter(isConfirmed),
+        family: (grouped.family || []).filter(isConfirmed),
+      }
+    : null
+  const sections = confirmedByType
+    ? ['doctor', 'nurse', 'family'].filter((type) => confirmedByType[type].length > 0)
     : []
+
+  const alreadyKnownUids = new Set(doctors.map((d) => d.doctorUid).filter(Boolean))
+  const availableDoctors = doctorOptions.filter((d) => !alreadyKnownUids.has(d.uid))
 
   return (
     <Box sx={{ p: 2, pb: 10, backgroundColor: '#f7f5fa', minHeight: '100vh' }}>
@@ -67,6 +135,88 @@ export default function TeamPage({ uid, onBack }) {
         </Box>
       </Box>
 
+      {/* Incoming requests: a doctor added this patient and is waiting for confirmation */}
+      {incomingRequests.length > 0 && (
+        <Card sx={{ borderRadius: 4, p: 2, mb: 2, backgroundColor: '#ece5f5' }}>
+          <Typography sx={{ fontWeight: 700, color: '#2b2338', mb: 1 }}>
+            Solicitações pendentes
+          </Typography>
+          {incomingRequests.map((req) => (
+            <Box key={req.doctorUid} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', py: 1 }}>
+              <Box>
+                <Typography sx={{ fontWeight: 600, color: '#2b2338' }}>{req.name}</Typography>
+                <Typography variant="body2" sx={{ color: '#7a7186' }}>
+                  quer entrar na sua equipe de cuidado
+                </Typography>
+              </Box>
+              <Box sx={{ display: 'flex', gap: 1 }}>
+                {respondingTo === req.doctorUid ? (
+                  <CircularProgress size={20} sx={{ color: '#634879' }} />
+                ) : (
+                  <>
+                    <Button size="small" onClick={() => handleRespond(req.doctorUid, false)} sx={{ color: '#7a7186', textTransform: 'none' }}>
+                      Recusar
+                    </Button>
+                    <Button
+                      size="small"
+                      variant="contained"
+                      onClick={() => handleRespond(req.doctorUid, true)}
+                      sx={{ backgroundColor: '#634879', textTransform: 'none', '&:hover': { backgroundColor: '#4f3a63' } }}
+                    >
+                      Aceitar
+                    </Button>
+                  </>
+                )}
+              </Box>
+            </Box>
+          ))}
+        </Card>
+      )}
+
+      {/* Add doctor */}
+      <Card sx={{ borderRadius: 4, p: 2, mb: 2 }}>
+        <Typography sx={{ fontWeight: 700, color: '#2b2338', mb: 1 }}>
+          Adicionar médico
+        </Typography>
+        <Autocomplete
+          fullWidth
+          size="small"
+          options={availableDoctors}
+          value={selectedDoctor}
+          onChange={(_, value) => setSelectedDoctor(value)}
+          getOptionLabel={(d) => d.fullName || ''}
+          isOptionEqualToValue={(a, b) => a.uid === b.uid}
+          renderOption={(props, option) => (
+            <li {...props} key={option.uid}>
+              <Box>
+                <Typography sx={{ fontSize: '0.9rem' }}>{option.fullName}</Typography>
+                <Typography variant="caption" sx={{ color: '#7a7186' }}>
+                  {option.specialty || 'Médico(a)'}
+                </Typography>
+              </Box>
+            </li>
+          )}
+          renderInput={(params) => (
+            <TextField {...params} placeholder="Buscar médico pelo nome..." sx={fieldSx} />
+          )}
+          noOptionsText="Nenhum médico encontrado"
+        />
+        {selectedDoctor && (
+          <Button
+            fullWidth
+            variant="contained"
+            disabled={linking}
+            onClick={handleAddDoctor}
+            sx={{
+              mt: 1.5, backgroundColor: '#634879', borderRadius: 3, py: 1, fontWeight: 600,
+              textTransform: 'none', '&:hover': { backgroundColor: '#4f3a63' },
+            }}
+          >
+            {linking ? <CircularProgress size={20} sx={{ color: '#fff' }} /> : `Enviar convite para ${selectedDoctor.fullName}`}
+          </Button>
+        )}
+      </Card>
+
       {error && (
         <Typography variant="body2" sx={{ color: '#d64545', mb: 2 }}>
           {error}
@@ -81,29 +231,22 @@ export default function TeamPage({ uid, onBack }) {
         </>
       )}
 
-      {grouped && sections.length === 0 && !error && (
+      {grouped && sections.length === 0 && incomingRequests.length === 0 && !error && (
         <Typography variant="body2" sx={{ color: '#7a7186', mb: 2 }}>
           Nenhum profissional ou familiar adicionado ainda.
         </Typography>
       )}
 
-      {grouped &&
+      {confirmedByType &&
         sections.map((type) => (
           <Box key={type} sx={{ mb: 2 }}>
             <Typography variant="caption" sx={{ color: '#b3aebb', fontWeight: 700 }}>
               {SECTION_LABELS[type].toUpperCase()}
             </Typography>
-            {grouped[type].map((member) => (
+            {confirmedByType[type].map((member) => (
               <Card
                 key={member.id}
-                sx={{
-                  borderRadius: 4,
-                  p: 1.6,
-                  mt: 1,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 1.5,
-                }}
+                sx={{ borderRadius: 4, p: 1.6, mt: 1, display: 'flex', alignItems: 'center', gap: 1.5 }}
               >
                 <Avatar sx={{ width: 48, height: 48 }}>👤</Avatar>
                 <Box>
@@ -118,22 +261,23 @@ export default function TeamPage({ uid, onBack }) {
           </Box>
         ))}
 
-      <Button
-        fullWidth
-        variant="contained"
-        sx={{
-          backgroundColor: '#ece5f5',
-          color: '#634879',
-          boxShadow: 'none',
-          borderRadius: 3,
-          py: 1.2,
-          fontWeight: 600,
-          mb: 2,
-          '&:hover': { backgroundColor: '#dcbced', boxShadow: 'none' },
-        }}
-      >
-        Gerenciar equipe
-      </Button>
+      {/* Outgoing requests: this patient invited a doctor, awaiting their confirmation */}
+      {doctors.filter(isOutgoingRequest).length > 0 && (
+        <Box sx={{ mb: 2 }}>
+          <Typography variant="caption" sx={{ color: '#b3aebb', fontWeight: 700 }}>
+            CONVITES ENVIADOS
+          </Typography>
+          {doctors.filter(isOutgoingRequest).map((req) => (
+            <Card key={req.doctorUid} sx={{ borderRadius: 4, p: 1.6, mt: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                <Avatar sx={{ width: 48, height: 48 }}>👤</Avatar>
+                <Typography sx={{ fontWeight: 600, color: '#2b2338' }}>{req.name}</Typography>
+              </Box>
+              <Chip label="Aguardando confirmação" size="small" sx={{ backgroundColor: '#f0eef3', color: '#7a7186', fontWeight: 600 }} />
+            </Card>
+          ))}
+        </Box>
+      )}
 
       <Card sx={{ borderRadius: 4, p: 2 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
@@ -155,4 +299,8 @@ export default function TeamPage({ uid, onBack }) {
       </Card>
     </Box>
   )
+}
+
+const fieldSx = {
+  '& .MuiOutlinedInput-root': { borderRadius: 2, backgroundColor: '#fff' },
 }

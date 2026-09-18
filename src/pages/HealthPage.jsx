@@ -4,6 +4,7 @@ import Typography from '@mui/material/Typography'
 import Avatar from '@mui/material/Avatar'
 import Card from '@mui/material/Card'
 import IconButton from '@mui/material/IconButton'
+import Badge from '@mui/material/Badge'
 import Skeleton from '@mui/material/Skeleton'
 import NotificationsNoneIcon from '@mui/icons-material/NotificationsNone'
 import LogoutIcon from '@mui/icons-material/Logout'
@@ -63,7 +64,7 @@ function computeChange(readings) {
   return { diff, percent, direction: diff < 0 ? 'down' : diff > 0 ? 'up' : 'flat' }
 }
 
-export default function HealthPage({ userName = 'Paciente', uid, onOpenCondition, onLogout }) {
+export default function HealthPage({ userName = 'Paciente', uid, onOpenCondition, onLogout, pendingRequestsCount = 0 }) {
   const [readingsByMetric, setReadingsByMetric] = useState(null)
   const [error, setError] = useState('')
 
@@ -100,7 +101,9 @@ export default function HealthPage({ userName = 'Paciente', uid, onOpenCondition
           </Typography>
         </Box>
         <IconButton>
-          <NotificationsNoneIcon sx={{ color: '#2b2338' }} />
+          <Badge badgeContent={pendingRequestsCount} color="error" max={9}>
+            <NotificationsNoneIcon sx={{ color: '#2b2338' }} />
+          </Badge>
         </IconButton>
         <IconButton onClick={onLogout} aria-label="Sair">
           <LogoutIcon sx={{ color: '#2b2338' }} />
