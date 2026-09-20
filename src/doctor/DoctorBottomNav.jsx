@@ -36,9 +36,9 @@ export default function DoctorBottomNav({ value, onChange, badgeCounts = {} }) {
           '& .MuiBottomNavigationAction-label': { fontSize: '0.7rem' },
         }}
       >
-        <BottomNavigationAction label="Pacientes" icon={withBadge(<GroupOutlinedIcon />, badgeCounts.pacientes)} />
+        <BottomNavigationAction label="Pacientes" icon={<GroupOutlinedIcon />} />
         <BottomNavigationAction label="Exames" icon={<ScienceOutlinedIcon />} />
-        <BottomNavigationAction label="Prontuário" icon={<DescriptionOutlinedIcon />} />
+        <BottomNavigationAction label="Prontuário" icon={withBadge(<DescriptionOutlinedIcon />, badgeCounts.prontuario)} />
         <BottomNavigationAction label="Agenda" icon={<EventOutlinedIcon />} />
       </BottomNavigation>
     </Paper>

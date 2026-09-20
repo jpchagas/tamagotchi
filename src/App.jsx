@@ -13,10 +13,10 @@ import TimelinePage from './pages/TimelinePage'
 import PlanPage from './pages/PlanPage'
 import TeamPage from './pages/TeamPage'
 import MetricPage from './pages/MetricPage'
+import SubmitExamResultPage from './pages/SubmitExamResultPage'
 import AppBottomNav from './pages/AppBottomNav'
 import DoctorHomePage from './doctor/DoctorHomePage'
 import ExamesPage from './doctor/ExamesPage'
-import ProntuarioPage from './doctor/ProntuarioPage'
 import AgendaPage from './doctor/AgendaPage'
 import PatientsListPage from './doctor/PatientsListPage'
 import DoctorBottomNav from './doctor/DoctorBottomNav'
@@ -25,15 +25,10 @@ import { subscribeToAuthChanges, logout } from './services/authService'
 import { getUserProfile } from './services/profileService'
 import { subscribeToIncomingRequestsForPatient, subscribeToIncomingRequestsForDoctor } from './services/careTeamService'
 
-const DOCTOR_SECTION_COMPONENTS = {
-  exames: ExamesPage,
-  prontuario: ProntuarioPage,
-  agenda: AgendaPage,
-}
-
 function PatientApp({ profile, uid, onLogout }) {
   const [section, setSection] = useState('saude')
   const [openCondition, setOpenCondition] = useState(null)
+  const [submittingExam, setSubmittingExam] = useState(false)
   const [pendingRequestsCount, setPendingRequestsCount] = useState(0)
   const firstName = profile?.fullName?.split(' ')[0] || 'Paciente'
 
@@ -49,6 +44,10 @@ function PatientApp({ profile, uid, onLogout }) {
     return <MetricPage conditionId={openCondition} onBack={() => setOpenCondition(null)} />
   }
 
+  if (submittingExam) {
+    return <SubmitExamResultPage uid={uid} profile={profile} onBack={() => setSubmittingExam(false)} />
+  }
+
   return (
     <Box sx={{ minHeight: '100vh', backgroundColor: '#f7f5fa' }}>
       {section === 'saude' && (
@@ -61,7 +60,7 @@ function PatientApp({ profile, uid, onLogout }) {
         />
       )}
       {section === 'linhaDoTempo' && <TimelinePage uid={uid} />}
-      {section === 'plano' && <PlanPage uid={uid} />}
+      {section === 'plano' && <PlanPage uid={uid} onSubmitExam={() => setSubmittingExam(true)} />}
       {section === 'equipe' && <TeamPage uid={uid} profile={profile} />}
       <AppBottomNav
         value={section}
@@ -74,9 +73,7 @@ function PatientApp({ profile, uid, onLogout }) {
 
 function DoctorApp({ profile, uid, onLogout }) {
   const [section, setSection] = useState('pacientes')
-  const [viewingPatients, setViewingPatients] = useState(false)
   const [pendingRequestsCount, setPendingRequestsCount] = useState(0)
-  const ActiveSection = DOCTOR_SECTION_COMPONENTS[section]
 
   useEffect(() => {
     if (!uid) return
@@ -86,33 +83,24 @@ function DoctorApp({ profile, uid, onLogout }) {
     return unsubscribe
   }, [uid])
 
-  if (viewingPatients) {
-    return (
-      <PatientsListPage
-        doctorUid={uid}
-        doctorProfile={profile}
-        onBack={() => setViewingPatients(false)}
-      />
-    )
-  }
-
   return (
     <Box sx={{ minHeight: '100vh', backgroundColor: '#f7f5fa' }}>
-      {section === 'pacientes' ? (
+      {section === 'pacientes' && (
         <DoctorHomePage
           doctorName={profile?.fullName?.split(' ')[0]}
           uid={uid}
           onLogout={onLogout}
-          onOpenPatients={() => setViewingPatients(true)}
+          onOpenPatients={() => setSection('prontuario')}
           pendingRequestsCount={pendingRequestsCount}
         />
-      ) : (
-        <ActiveSection />
       )}
+      {section === 'exames' && <ExamesPage uid={uid} />}
+      {section === 'prontuario' && <PatientsListPage doctorUid={uid} doctorProfile={profile} />}
+      {section === 'agenda' && <AgendaPage />}
       <DoctorBottomNav
         value={section}
         onChange={setSection}
-        badgeCounts={{ pacientes: pendingRequestsCount }}
+        badgeCounts={{ prontuario: pendingRequestsCount }}
       />
     </Box>
   )

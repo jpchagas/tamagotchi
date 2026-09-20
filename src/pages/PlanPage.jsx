@@ -51,7 +51,12 @@ const PRIORITY_STYLE = {
   rotina: { label: 'Rotina', color: '#3ba55c', bg: '#e6f5ea' },
 }
 
-export default function PlanPage({ uid }) {
+const REVIEW_STATUS_STYLE = {
+  not_reviewed: { label: 'Não revisado', color: '#e08a3c', bg: '#fdf1e6' },
+  reviewed: { label: 'Revisado', color: '#3ba55c', bg: '#e6f5ea' },
+}
+
+export default function PlanPage({ uid, onSubmitExam }) {
   const [view, setView] = useState('plano') // 'plano' | 'agenda'
   const [planoTab, setPlanoTab] = useState('agora')
   const [agendaTab, setAgendaTab] = useState('solicitado')
@@ -193,6 +198,19 @@ export default function PlanPage({ uid }) {
             Exames e acompanhamento
           </Typography>
 
+          <Button
+            fullWidth
+            variant="outlined"
+            onClick={onSubmitExam}
+            sx={{
+              borderRadius: 3, py: 1.2, fontWeight: 600, textTransform: 'none', mb: 2,
+              borderColor: '#634879', color: '#634879',
+              '&:hover': { borderColor: '#4f3a63', backgroundColor: '#f0eef3' },
+            }}
+          >
+            Enviar resultado de exame
+          </Button>
+
           <Box sx={{ display: 'flex', gap: 1, mb: 2, overflowX: 'auto' }}>
             {AGENDA_TABS.map((t) => (
               <Chip
@@ -231,7 +249,15 @@ export default function PlanPage({ uid }) {
                         </Typography>
                       </Box>
                     </Box>
-                    <Chip label={priority.label} size="small" sx={{ backgroundColor: priority.bg, color: priority.color, fontWeight: 600 }} />
+                    <Chip
+                      label={item.reviewStatus ? REVIEW_STATUS_STYLE[item.reviewStatus].label : priority.label}
+                      size="small"
+                      sx={{
+                        backgroundColor: item.reviewStatus ? REVIEW_STATUS_STYLE[item.reviewStatus].bg : priority.bg,
+                        color: item.reviewStatus ? REVIEW_STATUS_STYLE[item.reviewStatus].color : priority.color,
+                        fontWeight: 600,
+                      }}
+                    />
                   </Box>
                   {item.attachmentUrl && (
                     <Button

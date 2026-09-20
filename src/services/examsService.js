@@ -7,6 +7,8 @@ export { formatRelativeDate } from './dateUtils'
 //         priority ('prioritario' | 'rotina'), scheduledDate
 // Optional (set when a doctor attaches a prescription PDF):
 //         doctorUid, doctorName, attachmentUrl, attachmentFileName
+// Optional (set when a patient submits their own exam result — see examReviewService.js):
+//         reviewStatus ('not_reviewed' | 'reviewed')
 
 export async function getExams(uid) {
   const q = query(collection(db, 'users', uid, 'exams'), orderBy('scheduledDate', 'asc'))
