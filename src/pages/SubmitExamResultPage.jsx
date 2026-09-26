@@ -14,7 +14,7 @@ import UploadFileIcon from '@mui/icons-material/UploadFile'
 import CheckCircleIcon from '@mui/icons-material/CheckCircle'
 import { getCareTeam } from '../services/careTeamService'
 import { uploadExamResultFile } from '../services/storageService'
-import { submitExamResult } from '../services/examReviewService'
+import { createExamResultDraft, attachExamResultFile, markExamResultUploadFailed } from '../services/examReviewService'
 
 export default function SubmitExamResultPage({ uid, profile, onBack }) {
   const fileInputRef = useRef(null)
@@ -49,25 +49,34 @@ export default function SubmitExamResultPage({ uid, profile, onBack }) {
     }
 
     setError('')
-    setStatus('uploading')
-    try {
-      const tempId = `${Date.now()}`
-      const { fileUrl } = await uploadExamResultFile(uid, tempId, file, setUploadProgress)
+    setStatus('saving')
 
-      setStatus('saving')
-      await submitExamResult({
+    let examId = null
+    try {
+      // Creates the exam (and the doctor's review mirror) with
+      // processingStatus 'pending' before the upload starts.
+      examId = await createExamResultDraft({
         patientUid: uid,
         patientProfile: profile,
         doctorUid: selectedDoctor.doctorUid,
         doctorName: selectedDoctor.name,
         title,
         category,
+      })
+
+      setStatus('uploading')
+      const { fileUrl } = await uploadExamResultFile(uid, examId, file, setUploadProgress)
+
+      await attachExamResultFile(uid, selectedDoctor.doctorUid, examId, {
         attachmentUrl: fileUrl,
         attachmentFileName: file.name,
       })
 
       setStatus('done')
     } catch (err) {
+      if (examId) {
+        await markExamResultUploadFailed(uid, selectedDoctor.doctorUid, examId).catch(() => {})
+      }
       setError('Não foi possível enviar o exame. Tente novamente.')
       setStatus('error')
     }
@@ -85,7 +94,8 @@ export default function SubmitExamResultPage({ uid, profile, onBack }) {
             Exame enviado!
           </Typography>
           <Typography variant="body2" sx={{ color: '#4a6b52', mb: 2 }}>
-            {selectedDoctor?.name} vai revisar o resultado em breve.
+            Estamos lendo o arquivo automaticamente — isso pode levar alguns minutos.
+            {selectedDoctor?.name && ` ${selectedDoctor.name} também vai revisar o resultado.`}
           </Typography>
           <Button
             fullWidth

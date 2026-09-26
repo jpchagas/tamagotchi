@@ -13,9 +13,9 @@ import CircularProgress from '@mui/material/CircularProgress'
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'
 import UploadFileIcon from '@mui/icons-material/UploadFile'
 import CheckCircleIcon from '@mui/icons-material/CheckCircle'
-import { uploadPrescriptionFile } from '../services/storageService'
-import { addConduct } from '../services/conductsService'
-import { addExam } from '../services/examsService'
+import { uploadConductPrescriptionFile, uploadExamRequestFile } from '../services/storageService'
+import { addConduct, attachConductFile, markConductUploadFailed } from '../services/conductsService'
+import { addExam, attachExamFile, markExamUploadFailed } from '../services/examsService'
 
 const CONDUCT_TIMEFRAMES = [
   { key: 'agora', label: 'Agora' },
@@ -67,40 +67,52 @@ export default function SendPrescriptionPage({ doctorUid, doctorProfile, patient
     }
 
     setError('')
-    setStatus('uploading')
+    setStatus('saving')
+
+    // Created with processingStatus 'pending' BEFORE the upload, so the
+    // client never writes a status after the Cloud Function has started.
+    const commonFields = {
+      title,
+      doctorUid,
+      doctorName: doctorProfile?.fullName || '',
+      processingStatus: 'pending',
+    }
+
+    let createdId = null
     try {
-      const tempId = `${Date.now()}`
-      const { fileUrl } = await uploadPrescriptionFile(patient.patientUid, tempId, file, setUploadProgress)
-
-      setStatus('saving')
-      const commonFields = {
-        title,
-        doctorUid,
-        doctorName: doctorProfile?.fullName || '',
-        attachmentUrl: fileUrl,
-        attachmentFileName: file.name,
-      }
-
       if (kind === 'conduct') {
-        await addConduct(patient.patientUid, {
+        createdId = await addConduct(patient.patientUid, {
           ...commonFields,
           why,
           timeframe,
           type: conductType,
           dueDate: daysFromNow(daysUntil),
         })
+        setStatus('uploading')
+        const { fileUrl } = await uploadConductPrescriptionFile(patient.patientUid, createdId, file, setUploadProgress)
+        await attachConductFile(patient.patientUid, createdId, { attachmentUrl: fileUrl, attachmentFileName: file.name })
       } else {
-        await addExam(patient.patientUid, {
+        createdId = await addExam(patient.patientUid, {
           ...commonFields,
           status: 'solicitado',
           priority,
           icon: 'lab',
           scheduledDate: daysFromNow(daysUntil),
         })
+        setStatus('uploading')
+        const { fileUrl } = await uploadExamRequestFile(patient.patientUid, createdId, file, setUploadProgress)
+        await attachExamFile(patient.patientUid, createdId, { attachmentUrl: fileUrl, attachmentFileName: file.name })
       }
 
       setStatus('done')
     } catch (err) {
+      // If the record exists but the file never made it to Storage, the
+      // Cloud Function will never run — mark it failed so it doesn't sit
+      // on "Lendo documento..." forever.
+      if (createdId) {
+        const markFailed = kind === 'conduct' ? markConductUploadFailed : markExamUploadFailed
+        await markFailed(patient.patientUid, createdId).catch(() => {})
+      }
       setError('Não foi possível enviar a receita. Tente novamente.')
       setStatus('error')
     }
@@ -118,7 +130,7 @@ export default function SendPrescriptionPage({ doctorUid, doctorProfile, patient
             Receita enviada!
           </Typography>
           <Typography variant="body2" sx={{ color: '#4a6b52', mb: 2 }}>
-            {patient.name} vai ver isso {kind === 'conduct' ? 'no Plano' : 'na Agenda'}.
+            {patient.name} vai ver isso {kind === 'conduct' ? 'no Plano' : 'na Agenda'}. Os dados do documento aparecem assim que a leitura terminar.
           </Typography>
           <Button
             fullWidth

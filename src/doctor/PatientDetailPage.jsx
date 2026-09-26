@@ -14,8 +14,9 @@ import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined'
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward'
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward'
 import { getUserProfile } from '../services/profileService'
-import { getExams, groupByStatus, formatRelativeDate as examRelativeDate } from '../services/examsService'
-import { getConducts, groupByTimeframe, formatRelativeDate as conductRelativeDate } from '../services/conductsService'
+import { subscribeToExams, groupByStatus, formatRelativeDate as examRelativeDate } from '../services/examsService'
+import { subscribeToConducts, groupByTimeframe, formatRelativeDate as conductRelativeDate } from '../services/conductsService'
+import { ProcessingStatusChip, ExtractedDataPanel } from '../components/DocumentProcessing'
 import { getAllMetricReadingsGrouped, getLatestAndPrevious, getMetricDefinitions } from '../services/metricsService'
 
 const REVIEW_STATUS_STYLE = {
@@ -55,21 +56,28 @@ export default function PatientDetailPage({ patientUid, patientName, onBack }) {
       setError('Paciente não identificado.')
       return
     }
+    const onError = () => setError('Não foi possível carregar os dados deste paciente.')
+
     Promise.all([
       getUserProfile(patientUid),
-      getExams(patientUid),
-      getConducts(patientUid),
       getAllMetricReadingsGrouped(patientUid),
       getMetricDefinitions(),
     ])
-      .then(([profileData, examList, conductList, readings, definitions]) => {
+      .then(([profileData, readings, definitions]) => {
         setProfile(profileData)
-        setExams(examList)
-        setConducts(conductList)
         setReadingsByMetric(readings)
         setMetricDefinitions(Object.fromEntries(definitions.map((d) => [d.key, d])))
       })
-      .catch(() => setError('Não foi possível carregar os dados deste paciente.'))
+      .catch(onError)
+
+    // Exams and conducts are live, so a prescription the doctor just sent
+    // shows its extraction status (and results) without reopening the page.
+    const unsubscribeExams = subscribeToExams(patientUid, setExams, onError)
+    const unsubscribeConducts = subscribeToConducts(patientUid, setConducts, onError)
+    return () => {
+      unsubscribeExams()
+      unsubscribeConducts()
+    }
   }, [patientUid])
 
   const age = calculateAge(profile?.dateOfBirth)
@@ -222,18 +230,24 @@ function ExamsTab({ exams }) {
                     }}
                   />
                 </Box>
-                {e.attachmentUrl && (
-                  <Button
-                    href={e.attachmentUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    startIcon={<DescriptionOutlinedIcon />}
-                    size="small"
-                    sx={{ mt: 1, color: '#634879', textTransform: 'none', p: 0, minWidth: 0 }}
-                  >
-                    Ver arquivo
-                  </Button>
+                {(e.attachmentUrl || e.processingStatus) && (
+                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mt: 1 }}>
+                    {e.attachmentUrl ? (
+                      <Button
+                        href={e.attachmentUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        startIcon={<DescriptionOutlinedIcon />}
+                        size="small"
+                        sx={{ color: '#634879', textTransform: 'none', p: 0, minWidth: 0 }}
+                      >
+                        Ver arquivo
+                      </Button>
+                    ) : <span />}
+                    <ProcessingStatusChip status={e.processingStatus} />
+                  </Box>
                 )}
+                <ExtractedDataPanel item={e} />
               </Card>
             )
           })}
@@ -257,18 +271,24 @@ function ConductsTab({ conducts }) {
               <Typography sx={{ fontWeight: 600, color: '#2b2338' }}>{c.title}</Typography>
               <Typography variant="body2" sx={{ color: '#7a7186' }}>{conductRelativeDate(c.dueDate)}</Typography>
               {c.why && <Typography variant="body2" sx={{ color: '#7a7186', mt: 0.5 }}>{c.why}</Typography>}
-              {c.attachmentUrl && (
-                <Button
-                  href={c.attachmentUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  startIcon={<DescriptionOutlinedIcon />}
-                  size="small"
-                  sx={{ mt: 1, color: '#634879', textTransform: 'none', p: 0, minWidth: 0 }}
-                >
-                  Ver receita
-                </Button>
+              {(c.attachmentUrl || c.processingStatus) && (
+                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mt: 1 }}>
+                  {c.attachmentUrl ? (
+                    <Button
+                      href={c.attachmentUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      startIcon={<DescriptionOutlinedIcon />}
+                      size="small"
+                      sx={{ color: '#634879', textTransform: 'none', p: 0, minWidth: 0 }}
+                    >
+                      Ver receita
+                    </Button>
+                  ) : <span />}
+                  <ProcessingStatusChip status={c.processingStatus} />
+                </Box>
               )}
+              <ExtractedDataPanel item={c} />
             </Card>
           ))}
         </Box>

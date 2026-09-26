@@ -16,8 +16,9 @@ import EventIcon from '@mui/icons-material/Event'
 import VaccinesIcon from '@mui/icons-material/Vaccines'
 import BloodtypeIcon from '@mui/icons-material/Bloodtype'
 import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined'
-import { getConducts, groupByTimeframe, formatRelativeDate as conductRelativeDate } from '../services/conductsService'
-import { getExams, groupByStatus, formatRelativeDate as examRelativeDate } from '../services/examsService'
+import { subscribeToConducts, groupByTimeframe, formatRelativeDate as conductRelativeDate } from '../services/conductsService'
+import { subscribeToExams, groupByStatus, formatRelativeDate as examRelativeDate } from '../services/examsService'
+import { ProcessingStatusChip, ExtractedDataPanel } from '../components/DocumentProcessing'
 
 const PLANO_TABS = [
   { key: 'agora', label: 'Agora' },
@@ -65,25 +66,20 @@ export default function PlanPage({ uid, onSubmitExam }) {
   const [exams, setExams] = useState(null)
   const [error, setError] = useState('')
 
+  // Live subscriptions (not one-off reads): document extraction runs in a
+  // Cloud Function on its own schedule, so the status chip needs to flip
+  // from "Lendo documento" to "Dados extraídos" without a refresh.
   useEffect(() => {
     if (!uid) {
       setError('Usuário não identificado.')
       return
     }
-    let cancelled = false
-
-    Promise.all([getConducts(uid), getExams(uid)])
-      .then(([conductList, examList]) => {
-        if (cancelled) return
-        setConducts(groupByTimeframe(conductList))
-        setExams(groupByStatus(examList))
-      })
-      .catch(() => {
-        if (!cancelled) setError('Não foi possível carregar seu plano.')
-      })
-
+    const onError = () => setError('Não foi possível carregar seu plano.')
+    const unsubscribeConducts = subscribeToConducts(uid, (list) => setConducts(groupByTimeframe(list)), onError)
+    const unsubscribeExams = subscribeToExams(uid, (list) => setExams(groupByStatus(list)), onError)
     return () => {
-      cancelled = true
+      unsubscribeConducts()
+      unsubscribeExams()
     }
   }, [uid])
 
@@ -168,18 +164,24 @@ export default function PlanPage({ uid, onSubmitExam }) {
                     <Typography variant="body2" sx={{ color: '#7a7186' }}>{item.why}</Typography>
                   </>
                 )}
-                {item.attachmentUrl && (
-                  <Button
-                    href={item.attachmentUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    startIcon={<DescriptionOutlinedIcon />}
-                    size="small"
-                    sx={{ mt: 1, color: '#634879', textTransform: 'none', p: 0, minWidth: 0 }}
-                  >
-                    Ver receita{item.doctorName ? ` · ${item.doctorName}` : ''}
-                  </Button>
+                {(item.attachmentUrl || item.processingStatus) && (
+                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mt: 1 }}>
+                    {item.attachmentUrl ? (
+                      <Button
+                        href={item.attachmentUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        startIcon={<DescriptionOutlinedIcon />}
+                        size="small"
+                        sx={{ color: '#634879', textTransform: 'none', p: 0, minWidth: 0 }}
+                      >
+                        Ver receita{item.doctorName ? ` · ${item.doctorName}` : ''}
+                      </Button>
+                    ) : <span />}
+                    <ProcessingStatusChip status={item.processingStatus} />
+                  </Box>
                 )}
+                <ExtractedDataPanel item={item} />
               </Card>
             ))
           )}
@@ -259,18 +261,25 @@ export default function PlanPage({ uid, onSubmitExam }) {
                       }}
                     />
                   </Box>
-                  {item.attachmentUrl && (
-                    <Button
-                      href={item.attachmentUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      startIcon={<DescriptionOutlinedIcon />}
-                      size="small"
-                      sx={{ mt: 1, color: '#634879', textTransform: 'none', p: 0, minWidth: 0 }}
-                    >
-                      Ver receita{item.doctorName ? ` · ${item.doctorName}` : ''}
-                    </Button>
+                  {(item.attachmentUrl || item.processingStatus) && (
+                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mt: 1 }}>
+                      {item.attachmentUrl ? (
+                        <Button
+                          href={item.attachmentUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          startIcon={<DescriptionOutlinedIcon />}
+                          size="small"
+                          sx={{ color: '#634879', textTransform: 'none', p: 0, minWidth: 0 }}
+                        >
+                          {item.reviewStatus ? 'Ver resultado' : 'Ver pedido'}
+                          {!item.reviewStatus && item.doctorName ? ` · ${item.doctorName}` : ''}
+                        </Button>
+                      ) : <span />}
+                      <ProcessingStatusChip status={item.processingStatus} />
+                    </Box>
                   )}
+                  <ExtractedDataPanel item={item} />
                 </Card>
               )
             })

@@ -9,7 +9,8 @@ import Tab from '@mui/material/Tab'
 import Skeleton from '@mui/material/Skeleton'
 import CircularProgress from '@mui/material/CircularProgress'
 import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined'
-import { getDoctorExamReviews, groupByReviewStatus, filterByCategory, markExamReviewed } from '../services/examReviewService'
+import { subscribeToDoctorExamReviews, groupByReviewStatus, filterByCategory, markExamReviewed } from '../services/examReviewService'
+import { ProcessingStatusChip, ExtractedDataPanel } from '../components/DocumentProcessing'
 
 const CATEGORY_TABS = [
   { key: 'todos', label: 'Todos' },
@@ -24,26 +25,21 @@ export default function ExamesPage({ uid }) {
   const [error, setError] = useState('')
   const [reviewingId, setReviewingId] = useState(null)
 
-  const load = () => {
-    if (!uid) return
-    getDoctorExamReviews(uid)
-      .then(setReviews)
-      .catch(() => setError('Não foi possível carregar os exames.'))
-  }
-
+  // Live: the patient's file is read by a Cloud Function in the
+  // background, and the extracted values should appear here as soon as
+  // they're ready — the doctor shouldn't have to reopen the tab.
   useEffect(() => {
     if (!uid) {
       setError('Usuário não identificado.')
       return
     }
-    load()
+    return subscribeToDoctorExamReviews(uid, setReviews, () => setError('Não foi possível carregar os exames.'))
   }, [uid])
 
   const handleMarkReviewed = async (review) => {
     setReviewingId(review.id)
     try {
       await markExamReviewed(uid, review.patientUid, review.examId)
-      load()
     } catch {
       setError('Não foi possível marcar como revisado. Tente novamente.')
     } finally {
@@ -110,16 +106,22 @@ export default function ExamesPage({ uid }) {
                   <Chip label="Não revisado" size="small" sx={{ backgroundColor: '#fde3c6', color: '#e08a3c', fontWeight: 600 }} />
                 </Box>
 
-                <Button
-                  href={review.attachmentUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  startIcon={<DescriptionOutlinedIcon />}
-                  size="small"
-                  sx={{ mt: 1, color: '#634879', textTransform: 'none', p: 0, minWidth: 0 }}
-                >
-                  Ver arquivo
-                </Button>
+                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mt: 1 }}>
+                  {review.attachmentUrl ? (
+                    <Button
+                      href={review.attachmentUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      startIcon={<DescriptionOutlinedIcon />}
+                      size="small"
+                      sx={{ color: '#634879', textTransform: 'none', p: 0, minWidth: 0 }}
+                    >
+                      Ver arquivo
+                    </Button>
+                  ) : <span />}
+                  <ProcessingStatusChip status={review.processingStatus} />
+                </Box>
+                <ExtractedDataPanel item={review} />
 
                 <Button
                   fullWidth

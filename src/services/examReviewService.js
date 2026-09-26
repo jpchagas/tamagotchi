@@ -1,23 +1,26 @@
-import { collection, doc, setDoc, getDocs, query, where, orderBy, Timestamp, writeBatch } from 'firebase/firestore'
+import { collection, doc, setDoc, getDocs, onSnapshot, query, where, orderBy, Timestamp, writeBatch } from 'firebase/firestore'
 import { db } from '../firebase'
 
-// A patient submitting an exam result writes to two places in one batch,
-// same pattern as careTeamService's patient<->doctor linking:
+// A patient submitting an exam result writes to two places, same pattern as
+// careTeamService's patient<->doctor linking:
 //   users/{patientUid}/exams/{examId}         -> the exam itself (shows in patient's Agenda)
 //   users/{doctorUid}/examReviews/{examId}    -> a lightweight pointer so the doctor
 //                                                can list pending reviews across ALL
 //                                                their patients without a collectionGroup query
-// Both copies carry reviewStatus ('not_reviewed' | 'reviewed') and category
-// ('laboratorial' | 'imagem' | 'documento'), kept in sync by markExamReviewed.
-// The same examId is used in both places.
+// Both copies carry reviewStatus ('not_reviewed' | 'reviewed'), category, and
+// (once a file is attached) processingStatus — kept in sync by the functions
+// below. The same examId is used in both places.
+//
+// This is a TWO-STEP flow, not one write: the doc must exist (with a real
+// examId) *before* the file is uploaded, because the Storage path embeds
+// that examId so the Cloud Function knows which doc to update. See
+// storageService.uploadExamResultFile and functions/index.js.
 //
 // users/{doctorUid}/patients/{patientUid} also gets a denormalized
-// hasPendingReview flag, updated here, so the Pacientes list can show an
-// alert indicator without querying exams per-patient on every render.
+// hasPendingReview flag, so the Pacientes list can show an alert indicator
+// without querying exams per-patient on every render.
 
-export async function submitExamResult({
-  patientUid, patientProfile, doctorUid, doctorName, title, category, attachmentUrl, attachmentFileName,
-}) {
+export async function createExamResultDraft({ patientUid, patientProfile, doctorUid, doctorName, title, category }) {
   const examRef = doc(collection(db, 'users', patientUid, 'exams'))
   const examId = examRef.id
   const submittedAt = Timestamp.now()
@@ -33,21 +36,18 @@ export async function submitExamResult({
     scheduledDate: submittedAt,
     doctorUid,
     doctorName,
-    attachmentUrl,
-    attachmentFileName,
     reviewStatus: 'not_reviewed',
+    processingStatus: 'pending',
   })
 
-  const reviewRef = doc(db, 'users', doctorUid, 'examReviews', examId)
-  batch.set(reviewRef, {
+  batch.set(doc(db, 'users', doctorUid, 'examReviews', examId), {
     examId,
     patientUid,
     patientName: patientProfile?.fullName || '',
     title,
     category: category || 'documento',
-    attachmentUrl,
-    attachmentFileName,
     reviewStatus: 'not_reviewed',
+    processingStatus: 'pending',
     submittedAt,
   })
 
@@ -55,6 +55,25 @@ export async function submitExamResult({
 
   await batch.commit()
   return examId
+}
+
+// Called after the file upload succeeds. Deliberately does NOT touch
+// processingStatus (set to 'pending' in createExamResultDraft, before the
+// upload) — only the Cloud Function moves it forward from there.
+export async function attachExamResultFile(patientUid, doctorUid, examId, { attachmentUrl, attachmentFileName }) {
+  const batch = writeBatch(db)
+  const fields = { attachmentUrl, attachmentFileName }
+  batch.set(doc(db, 'users', patientUid, 'exams', examId), fields, { merge: true })
+  batch.set(doc(db, 'users', doctorUid, 'examReviews', examId), fields, { merge: true })
+  await batch.commit()
+}
+
+export async function markExamResultUploadFailed(patientUid, doctorUid, examId) {
+  const batch = writeBatch(db)
+  const fields = { processingStatus: 'failed', processingError: 'upload_failed' }
+  batch.set(doc(db, 'users', patientUid, 'exams', examId), fields, { merge: true })
+  batch.set(doc(db, 'users', doctorUid, 'examReviews', examId), fields, { merge: true })
+  await batch.commit()
 }
 
 export async function markExamReviewed(doctorUid, patientUid, examId) {
@@ -85,6 +104,20 @@ export async function getDoctorExamReviews(doctorUid) {
     const data = d.data()
     return { id: d.id, ...data, submittedAt: data.submittedAt?.toDate?.() || null }
   })
+}
+
+// Live version — so ExamesPage reflects processingStatus changing in the
+// background (the Cloud Function runs asynchronously, on its own schedule).
+export function subscribeToDoctorExamReviews(doctorUid, callback, onError) {
+  const q = query(collection(db, 'users', doctorUid, 'examReviews'), orderBy('submittedAt', 'desc'))
+  return onSnapshot(q, (snapshot) => {
+    callback(
+      snapshot.docs.map((d) => {
+        const data = d.data()
+        return { id: d.id, ...data, submittedAt: data.submittedAt?.toDate?.() || null }
+      })
+    )
+  }, onError)
 }
 
 export function groupByReviewStatus(reviews) {
