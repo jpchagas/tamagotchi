@@ -52,7 +52,7 @@ export default function SendPrescriptionPage({ doctorUid, doctorProfile, patient
   const [daysUntil, setDaysUntil] = useState('7')
 
   const [uploadProgress, setUploadProgress] = useState(0)
-  const [status, setStatus] = useState('idle') // idle -> uploading -> saving -> done -> error
+  const [status, setStatus] = useState('idle') // idle -> saving -> uploading -> done | error
   const [error, setError] = useState('')
 
   const handleFileChange = (e) => {
@@ -73,7 +73,7 @@ export default function SendPrescriptionPage({ doctorUid, doctorProfile, patient
     // client never writes a status after the Cloud Function has started.
     const commonFields = {
       title,
-      doctorUid,
+      doctorId: doctorUid,
       doctorName: doctorProfile?.fullName || '',
       processingStatus: 'pending',
     }
@@ -81,7 +81,7 @@ export default function SendPrescriptionPage({ doctorUid, doctorProfile, patient
     let createdId = null
     try {
       if (kind === 'conduct') {
-        createdId = await addConduct(patient.patientUid, {
+        createdId = await addConduct(patient.patientId, {
           ...commonFields,
           why,
           timeframe,
@@ -89,10 +89,10 @@ export default function SendPrescriptionPage({ doctorUid, doctorProfile, patient
           dueDate: daysFromNow(daysUntil),
         })
         setStatus('uploading')
-        const { fileUrl } = await uploadConductPrescriptionFile(patient.patientUid, createdId, file, setUploadProgress)
-        await attachConductFile(patient.patientUid, createdId, { attachmentUrl: fileUrl, attachmentFileName: file.name })
+        const { fileUrl } = await uploadConductPrescriptionFile(patient.patientId, createdId, file, setUploadProgress)
+        await attachConductFile(createdId, { attachmentUrl: fileUrl, attachmentFileName: file.name })
       } else {
-        createdId = await addExam(patient.patientUid, {
+        createdId = await addExam(patient.patientId, {
           ...commonFields,
           status: 'solicitado',
           priority,
@@ -100,8 +100,8 @@ export default function SendPrescriptionPage({ doctorUid, doctorProfile, patient
           scheduledDate: daysFromNow(daysUntil),
         })
         setStatus('uploading')
-        const { fileUrl } = await uploadExamRequestFile(patient.patientUid, createdId, file, setUploadProgress)
-        await attachExamFile(patient.patientUid, createdId, { attachmentUrl: fileUrl, attachmentFileName: file.name })
+        const { fileUrl } = await uploadExamRequestFile(patient.patientId, createdId, file, setUploadProgress)
+        await attachExamFile(createdId, { attachmentUrl: fileUrl, attachmentFileName: file.name })
       }
 
       setStatus('done')
@@ -111,7 +111,7 @@ export default function SendPrescriptionPage({ doctorUid, doctorProfile, patient
       // on "Lendo documento..." forever.
       if (createdId) {
         const markFailed = kind === 'conduct' ? markConductUploadFailed : markExamUploadFailed
-        await markFailed(patient.patientUid, createdId).catch(() => {})
+        await markFailed(createdId).catch(() => {})
       }
       setError('Não foi possível enviar a receita. Tente novamente.')
       setStatus('error')
@@ -130,7 +130,7 @@ export default function SendPrescriptionPage({ doctorUid, doctorProfile, patient
             Receita enviada!
           </Typography>
           <Typography variant="body2" sx={{ color: '#4a6b52', mb: 2 }}>
-            {patient.name} vai ver isso {kind === 'conduct' ? 'no Plano' : 'na Agenda'}. Os dados do documento aparecem assim que a leitura terminar.
+            {patient.patientName} vai ver isso {kind === 'conduct' ? 'no Plano' : 'na Agenda'}. Os dados do documento aparecem assim que a leitura terminar.
           </Typography>
           <Button
             fullWidth
@@ -155,7 +155,7 @@ export default function SendPrescriptionPage({ doctorUid, doctorProfile, patient
         Enviar receita
       </Typography>
       <Typography variant="body2" sx={{ color: '#7a7186', mb: 3 }}>
-        Para {patient.name}
+        Para {patient.patientName}
       </Typography>
 
       <Typography sx={{ fontWeight: 600, color: '#2b2338', mb: 1 }}>

@@ -1,0 +1,54 @@
+rules_version = '2';
+
+// Upload paths embed the Firestore doc id (see storageService.js and the
+// ROUTES in functions/index.js), so each write is checked against that doc:
+// it must belong to the patient in the path, and the uploader must be the
+// side that creates that kind of document. Reads follow the same access as
+// the Firestore doc. Limits match functions/index.js (PDF/PNG/JPEG, 14 MB).
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function docData(collection, id) {
+      return firestore.get(/databases/(default)/documents/$(collection)/$(id)).data;
+    }
+
+    function confirmedLink(patientUid, doctorUid) {
+      let path = /databases/(default)/documents/careLinks/$(patientUid + '_' + doctorUid);
+      return firestore.exists(path) && firestore.get(path).data.status == 'confirmed';
+    }
+
+    function canReadPatient(patientUid) {
+      return signedIn() && (request.auth.uid == patientUid || confirmedLink(patientUid, request.auth.uid));
+    }
+
+    function validFile() {
+      return request.resource.size < 14 * 1024 * 1024
+        && request.resource.contentType.matches('application/pdf|image/png|image/jpeg');
+    }
+
+    // Prescription PDF: uploaded by the doctor who created the conduct.
+    match /users/{patientUid}/conducts/{conductId}/{fileName} {
+      allow read: if canReadPatient(patientUid);
+      allow create: if signedIn() && validFile()
+        && fileName.matches('prescription-.*')
+        && docData('conducts', conductId).patientId == patientUid
+        && docData('conducts', conductId).doctorId == request.auth.uid;
+    }
+
+    match /users/{patientUid}/exams/{examId}/{fileName} {
+      allow read: if canReadPatient(patientUid);
+      // Exam request: uploaded by the requesting doctor.
+      // Exam result: uploaded by the patient.
+      allow create: if signedIn() && validFile()
+        && docData('exams', examId).patientId == patientUid
+        && (
+          (fileName.matches('request-.*') && docData('exams', examId).doctorId == request.auth.uid)
+          || (fileName.matches('result-.*') && request.auth.uid == patientUid)
+        );
+    }
+  }
+}

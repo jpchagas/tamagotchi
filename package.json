@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:emulators": "VITE_USE_EMULATORS=true vite",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview"

@@ -12,9 +12,10 @@ import CircularProgress from '@mui/material/CircularProgress'
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'
 import UploadFileIcon from '@mui/icons-material/UploadFile'
 import CheckCircleIcon from '@mui/icons-material/CheckCircle'
-import { getCareTeam } from '../services/careTeamService'
+import { getPatientCareLinks } from '../services/careTeamService'
 import { uploadExamResultFile } from '../services/storageService'
-import { createExamResultDraft, attachExamResultFile, markExamResultUploadFailed } from '../services/examReviewService'
+import { createExamResultDraft } from '../services/examReviewService'
+import { attachExamFile, markExamUploadFailed } from '../services/examsService'
 
 export default function SubmitExamResultPage({ uid, profile, onBack }) {
   const fileInputRef = useRef(null)
@@ -25,15 +26,13 @@ export default function SubmitExamResultPage({ uid, profile, onBack }) {
   const [file, setFile] = useState(null)
 
   const [uploadProgress, setUploadProgress] = useState(0)
-  const [status, setStatus] = useState('idle') // idle -> uploading -> saving -> done -> error
+  const [status, setStatus] = useState('idle') // idle -> saving -> uploading -> done | error
   const [error, setError] = useState('')
 
   useEffect(() => {
     if (!uid) return
-    getCareTeam(uid)
-      .then((members) =>
-        setDoctorOptions(members.filter((m) => m.memberType === 'doctor' && m.status !== 'pending'))
-      )
+    getPatientCareLinks(uid)
+      .then((links) => setDoctorOptions(links.filter((l) => l.status === 'confirmed')))
       .catch(() => {})
   }, [uid])
 
@@ -53,13 +52,13 @@ export default function SubmitExamResultPage({ uid, profile, onBack }) {
 
     let examId = null
     try {
-      // Creates the exam (and the doctor's review mirror) with
-      // processingStatus 'pending' before the upload starts.
+      // Creates the exam with processingStatus 'pending' before the upload
+      // starts, so the Storage path can carry its id.
       examId = await createExamResultDraft({
         patientUid: uid,
         patientProfile: profile,
-        doctorUid: selectedDoctor.doctorUid,
-        doctorName: selectedDoctor.name,
+        doctorUid: selectedDoctor.doctorId,
+        doctorName: selectedDoctor.doctorName,
         title,
         category,
       })
@@ -67,7 +66,7 @@ export default function SubmitExamResultPage({ uid, profile, onBack }) {
       setStatus('uploading')
       const { fileUrl } = await uploadExamResultFile(uid, examId, file, setUploadProgress)
 
-      await attachExamResultFile(uid, selectedDoctor.doctorUid, examId, {
+      await attachExamFile(examId, {
         attachmentUrl: fileUrl,
         attachmentFileName: file.name,
       })
@@ -75,7 +74,7 @@ export default function SubmitExamResultPage({ uid, profile, onBack }) {
       setStatus('done')
     } catch (err) {
       if (examId) {
-        await markExamResultUploadFailed(uid, selectedDoctor.doctorUid, examId).catch(() => {})
+        await markExamUploadFailed(examId).catch(() => {})
       }
       setError('Não foi possível enviar o exame. Tente novamente.')
       setStatus('error')
@@ -95,7 +94,7 @@ export default function SubmitExamResultPage({ uid, profile, onBack }) {
           </Typography>
           <Typography variant="body2" sx={{ color: '#4a6b52', mb: 2 }}>
             Estamos lendo o arquivo automaticamente — isso pode levar alguns minutos.
-            {selectedDoctor?.name && ` ${selectedDoctor.name} também vai revisar o resultado.`}
+            {selectedDoctor?.doctorName && ` ${selectedDoctor.doctorName} também vai revisar o resultado.`}
           </Typography>
           <Button
             fullWidth
@@ -144,13 +143,13 @@ export default function SubmitExamResultPage({ uid, profile, onBack }) {
         options={doctorOptions}
         value={selectedDoctor}
         onChange={(_, value) => setSelectedDoctor(value)}
-        getOptionLabel={(d) => d.name || ''}
-        isOptionEqualToValue={(a, b) => a.doctorUid === b.doctorUid}
+        getOptionLabel={(d) => d.doctorName || ''}
+        isOptionEqualToValue={(a, b) => a.doctorId === b.doctorId}
         renderOption={(props, option) => (
-          <li {...props} key={option.doctorUid}>
+          <li {...props} key={option.doctorId}>
             <Box>
-              <Typography sx={{ fontSize: '0.9rem' }}>{option.name}</Typography>
-              <Typography variant="caption" sx={{ color: '#7a7186' }}>{option.specialty}</Typography>
+              <Typography sx={{ fontSize: '0.9rem' }}>{option.doctorName}</Typography>
+              <Typography variant="caption" sx={{ color: '#7a7186' }}>{option.doctorSpecialty}</Typography>
             </Box>
           </li>
         )}

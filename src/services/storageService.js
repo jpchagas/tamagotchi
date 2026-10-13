@@ -1,7 +1,5 @@
-import { getStorage, ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage'
-import { firebaseApp } from '../firebase'
-
-const storage = getStorage(firebaseApp)
+import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage'
+import { storage } from '../firebase'
 
 async function uploadFile(storagePath, file, onProgress) {
   const storageRef = ref(storage, storagePath)

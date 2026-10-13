@@ -5,19 +5,11 @@ import Card from '@mui/material/Card'
 import Chip from '@mui/material/Chip'
 import Skeleton from '@mui/material/Skeleton'
 import { LineChart, Line, ResponsiveContainer, YAxis } from 'recharts'
-import { getAllMetricReadingsGrouped } from '../services/metricsService'
+import { getBiomarkersGrouped, getBiomarkerTypes } from '../services/biomarkersService'
 
 const RANGES = ['3M', '6M', '1A', '2A', 'Tudo']
 const RANGE_MONTHS = { '3M': 3, '6M': 6, '1A': 12, '2A': 24, Tudo: null }
 
-// Which metrics to show here, and how to describe their trend in words.
-// (Direction of "improvement" varies per metric — e.g. LDL/ApoB going down
-// is good, so this stays a simple config rather than a generic rule.)
-const TIMELINE_METRICS = [
-  { key: 'ldl', label: 'LDL', unit: 'mg/dL', goodDirection: 'down' },
-  { key: 'apob', label: 'ApoB', unit: 'mg/dL', goodDirection: 'down' },
-  { key: 'hba1c', label: 'HbA1c', unit: '%', goodDirection: 'down' },
-]
 
 function filterByRange(readings, rangeLabel) {
   const months = RANGE_MONTHS[rangeLabel]
@@ -32,6 +24,9 @@ function describeTrend(readings, goodDirection) {
   const first = readings[0].value
   const last = readings[readings.length - 1].value
   if (last === first) return { label: 'Estável', color: '#5b6b8c', bg: '#e8ecf5' }
+  // Types created by the extraction have no goodDirection: show the
+  // direction without calling it better or worse.
+  if (!goodDirection) return { label: last > first ? 'Subindo' : 'Descendo', color: '#5b6b8c', bg: '#e8ecf5' }
   const improving = goodDirection === 'down' ? last < first : last > first
   return improving
     ? { label: 'Melhorando', color: '#3ba55c', bg: '#e6f5ea' }
@@ -40,7 +35,7 @@ function describeTrend(readings, goodDirection) {
 
 export default function TimelinePage({ uid }) {
   const [range, setRange] = useState('2A')
-  const [readingsByMetric, setReadingsByMetric] = useState(null)
+  const [biomarkers, setBiomarkers] = useState(null)
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -50,9 +45,14 @@ export default function TimelinePage({ uid }) {
     }
     let cancelled = false
 
-    getAllMetricReadingsGrouped(uid)
-      .then((grouped) => {
-        if (!cancelled) setReadingsByMetric(grouped)
+    Promise.all([getBiomarkersGrouped(uid), getBiomarkerTypes()])
+      .then(([grouped, types]) => {
+        if (cancelled) return
+        // Every biomarker the patient has, in alphabetical order of label.
+        const list = Object.entries(grouped)
+          .map(([key, readings]) => ({ key, readings, label: types[key]?.label || key, unit: types[key]?.unit || readings[0]?.unit || '', goodDirection: types[key]?.goodDirection }))
+          .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'))
+        setBiomarkers(list)
       })
       .catch(() => {
         if (!cancelled) setError('Não foi possível carregar seu histórico.')
@@ -94,14 +94,19 @@ export default function TimelinePage({ uid }) {
         </Typography>
       )}
 
-      {!readingsByMetric && !error
+      {biomarkers && biomarkers.length === 0 && (
+        <Typography variant="body2" sx={{ color: '#7a7186' }}>
+          Nenhum indicador registrado ainda. Eles aparecem aqui quando você envia resultados de exames.
+        </Typography>
+      )}
+
+      {!biomarkers && !error
         ? [0, 1, 2].map((i) => (
             <Skeleton key={i} variant="rounded" sx={{ height: 120, borderRadius: 4, mb: 2 }} />
           ))
-        : readingsByMetric &&
-          TIMELINE_METRICS.map((m) => {
-            const allReadings = readingsByMetric[m.key] || []
-            const readings = filterByRange(allReadings, range)
+        : biomarkers &&
+          biomarkers.map((m) => {
+            const readings = filterByRange(m.readings, range)
             const trend = describeTrend(readings, m.goodDirection)
             const from = readings[0]?.value
             const to = readings[readings.length - 1]?.value

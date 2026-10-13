@@ -13,8 +13,8 @@ import CircularProgress from '@mui/material/CircularProgress'
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'
 import ChatBubbleOutlinedIcon from "@mui/icons-material/ChatBubbleOutlined"
 import {
-  getCareTeam,
-  groupByMemberType,
+  getPatientCareLinks,
+  getCareContacts,
   requestPatientDoctorLink,
   confirmPatientDoctorLink,
   declinePatientDoctorLink,
@@ -27,21 +27,27 @@ const SECTION_LABELS = {
   family: 'Família',
 }
 
-function subtitleFor(member) {
-  if (member.memberType === 'doctor') return `${member.specialty || ''} · ${member.crm || ''}`.trim()
-  if (member.memberType === 'nurse') return member.specialty || 'Enfermagem'
-  if (member.memberType === 'family') return member.relationship || 'Família'
-  return ''
+// Doctors are careLinks (real users); nurses and family are careContacts.
+// Both are shown as { id, name, subtitle, phone } cards.
+function doctorCard(link) {
+  return {
+    id: link.id,
+    name: link.doctorName,
+    subtitle: [link.doctorSpecialty, link.doctorCrm].filter(Boolean).join(' · '),
+  }
 }
 
-// Manually-added members (family, nurse, or doctors seeded before this
-// feature existed) have no status field — treat that as already confirmed.
-const isConfirmed = (m) => m.status !== 'pending'
-const isIncomingRequest = (m) => m.status === 'pending' && m.initiatedBy === 'doctor'
-const isOutgoingRequest = (m) => m.status === 'pending' && m.initiatedBy === 'patient'
+function contactCard(contact) {
+  const subtitle = contact.memberType === 'nurse' ? contact.specialty || 'Enfermagem' : contact.relationship || 'Família'
+  return { id: contact.id, name: contact.name, subtitle, phone: contact.phone }
+}
+
+const isConfirmed = (link) => link.status === 'confirmed'
+const isIncomingRequest = (link) => link.status === 'pending' && link.initiatedBy === 'doctor'
+const isOutgoingRequest = (link) => link.status === 'pending' && link.initiatedBy === 'patient'
 
 export default function TeamPage({ uid, profile, onBack }) {
-  const [grouped, setGrouped] = useState(null)
+  const [team, setTeam] = useState(null) // { links, contacts }
   const [error, setError] = useState('')
 
   const [doctorOptions, setDoctorOptions] = useState([])
@@ -51,8 +57,8 @@ export default function TeamPage({ uid, profile, onBack }) {
 
   const loadCareTeam = () => {
     if (!uid) return
-    getCareTeam(uid)
-      .then((members) => setGrouped(groupByMemberType(members)))
+    Promise.all([getPatientCareLinks(uid), getCareContacts(uid)])
+      .then(([links, contacts]) => setTeam({ links, contacts }))
       .catch(() => setError('Não foi possível carregar sua equipe.'))
   }
 
@@ -103,20 +109,21 @@ export default function TeamPage({ uid, profile, onBack }) {
     }
   }
 
-  const doctors = grouped?.doctor || []
+  const doctors = team?.links || []
   const incomingRequests = doctors.filter(isIncomingRequest)
-  const confirmedByType = grouped
+  const outgoingRequests = doctors.filter(isOutgoingRequest)
+  const cardsByType = team
     ? {
-        doctor: doctors.filter(isConfirmed),
-        nurse: (grouped.nurse || []).filter(isConfirmed),
-        family: (grouped.family || []).filter(isConfirmed),
+        doctor: doctors.filter(isConfirmed).map(doctorCard),
+        nurse: team.contacts.filter((c) => c.memberType === 'nurse').map(contactCard),
+        family: team.contacts.filter((c) => c.memberType === 'family').map(contactCard),
       }
     : null
-  const sections = confirmedByType
-    ? ['doctor', 'nurse', 'family'].filter((type) => confirmedByType[type].length > 0)
+  const sections = cardsByType
+    ? ['doctor', 'nurse', 'family'].filter((type) => cardsByType[type].length > 0)
     : []
 
-  const alreadyKnownUids = new Set(doctors.map((d) => d.doctorUid).filter(Boolean))
+  const alreadyKnownUids = new Set(doctors.map((d) => d.doctorId))
   const availableDoctors = doctorOptions.filter((d) => !alreadyKnownUids.has(d.uid))
 
   return (
@@ -142,25 +149,25 @@ export default function TeamPage({ uid, profile, onBack }) {
             Solicitações pendentes
           </Typography>
           {incomingRequests.map((req) => (
-            <Box key={req.doctorUid} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', py: 1 }}>
+            <Box key={req.id} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', py: 1 }}>
               <Box>
-                <Typography sx={{ fontWeight: 600, color: '#2b2338' }}>{req.name}</Typography>
+                <Typography sx={{ fontWeight: 600, color: '#2b2338' }}>{req.doctorName}</Typography>
                 <Typography variant="body2" sx={{ color: '#7a7186' }}>
                   quer entrar na sua equipe de cuidado
                 </Typography>
               </Box>
               <Box sx={{ display: 'flex', gap: 1 }}>
-                {respondingTo === req.doctorUid ? (
+                {respondingTo === req.doctorId ? (
                   <CircularProgress size={20} sx={{ color: '#634879' }} />
                 ) : (
                   <>
-                    <Button size="small" onClick={() => handleRespond(req.doctorUid, false)} sx={{ color: '#7a7186', textTransform: 'none' }}>
+                    <Button size="small" onClick={() => handleRespond(req.doctorId, false)} sx={{ color: '#7a7186', textTransform: 'none' }}>
                       Recusar
                     </Button>
                     <Button
                       size="small"
                       variant="contained"
-                      onClick={() => handleRespond(req.doctorUid, true)}
+                      onClick={() => handleRespond(req.doctorId, true)}
                       sx={{ backgroundColor: '#634879', textTransform: 'none', '&:hover': { backgroundColor: '#4f3a63' } }}
                     >
                       Aceitar
@@ -223,7 +230,7 @@ export default function TeamPage({ uid, profile, onBack }) {
         </Typography>
       )}
 
-      {!grouped && !error && (
+      {!team && !error && (
         <>
           {[0, 1, 2].map((i) => (
             <Skeleton key={i} variant="rounded" sx={{ height: 72, borderRadius: 4, mb: 1.2 }} />
@@ -231,19 +238,19 @@ export default function TeamPage({ uid, profile, onBack }) {
         </>
       )}
 
-      {grouped && sections.length === 0 && incomingRequests.length === 0 && !error && (
+      {team && sections.length === 0 && incomingRequests.length === 0 && !error && (
         <Typography variant="body2" sx={{ color: '#7a7186', mb: 2 }}>
           Nenhum profissional ou familiar adicionado ainda.
         </Typography>
       )}
 
-      {confirmedByType &&
+      {cardsByType &&
         sections.map((type) => (
           <Box key={type} sx={{ mb: 2 }}>
             <Typography variant="caption" sx={{ color: '#b3aebb', fontWeight: 700 }}>
               {SECTION_LABELS[type].toUpperCase()}
             </Typography>
-            {confirmedByType[type].map((member) => (
+            {cardsByType[type].map((member) => (
               <Card
                 key={member.id}
                 sx={{ borderRadius: 4, p: 1.6, mt: 1, display: 'flex', alignItems: 'center', gap: 1.5 }}
@@ -251,7 +258,7 @@ export default function TeamPage({ uid, profile, onBack }) {
                 <Avatar sx={{ width: 48, height: 48 }}>👤</Avatar>
                 <Box>
                   <Typography sx={{ fontWeight: 600, color: '#2b2338' }}>{member.name}</Typography>
-                  <Typography variant="body2" sx={{ color: '#7a7186' }}>{subtitleFor(member)}</Typography>
+                  <Typography variant="body2" sx={{ color: '#7a7186' }}>{member.subtitle}</Typography>
                   {member.phone && (
                     <Typography variant="caption" sx={{ color: '#b3aebb' }}>{member.phone}</Typography>
                   )}
@@ -262,16 +269,16 @@ export default function TeamPage({ uid, profile, onBack }) {
         ))}
 
       {/* Outgoing requests: this patient invited a doctor, awaiting their confirmation */}
-      {doctors.filter(isOutgoingRequest).length > 0 && (
+      {outgoingRequests.length > 0 && (
         <Box sx={{ mb: 2 }}>
           <Typography variant="caption" sx={{ color: '#b3aebb', fontWeight: 700 }}>
             CONVITES ENVIADOS
           </Typography>
-          {doctors.filter(isOutgoingRequest).map((req) => (
-            <Card key={req.doctorUid} sx={{ borderRadius: 4, p: 1.6, mt: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          {outgoingRequests.map((req) => (
+            <Card key={req.id} sx={{ borderRadius: 4, p: 1.6, mt: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
                 <Avatar sx={{ width: 48, height: 48 }}>👤</Avatar>
-                <Typography sx={{ fontWeight: 600, color: '#2b2338' }}>{req.name}</Typography>
+                <Typography sx={{ fontWeight: 600, color: '#2b2338' }}>{req.doctorName}</Typography>
               </Box>
               <Chip label="Aguardando confirmação" size="small" sx={{ backgroundColor: '#f0eef3', color: '#7a7186', fontWeight: 600 }} />
             </Card>

@@ -1,66 +1,80 @@
-import { collection, doc, addDoc, setDoc, getDocs, onSnapshot, query, orderBy, Timestamp } from 'firebase/firestore'
+import { collection, doc, addDoc, setDoc, getDocs, onSnapshot, query, where, Timestamp } from 'firebase/firestore'
 import { db } from '../firebase'
 export { formatRelativeDate } from './dateUtils'
 
-// Collection: users/{uid}/exams/{examId}
-// Fields: title, status ('solicitado' | 'em_andamento' | 'realizado'),
+// Collection: exams/{examId}
+// Fields: patientId, title, kind ('request' | 'result'),
+//         status ('solicitado' | 'em_andamento' | 'realizado'),
 //         priority ('prioritario' | 'rotina'), scheduledDate, category
-//         ('laboratorial' | 'imagem' | 'documento')
-// Optional (set when a doctor attaches a request PDF):
-//         doctorUid, doctorName, attachmentUrl, attachmentFileName
-// Optional (set when a patient submits their own exam result — see examReviewService.js):
+//         ('laboratorial' | 'imagem' | 'documento'), icon
+// Optional (set when a doctor attaches a request PDF, or a patient submits
+// a result to a doctor): doctorId, doctorName, attachmentUrl, attachmentFileName
+// Results only (see examReviewService.js): patientName, submittedAt,
 //         reviewStatus ('not_reviewed' | 'reviewed')
 // Optional (set by the Cloud Function in functions/index.js once it processes
-// an attached PDF — see storageService.uploadExamRequestFile / uploadExamResultFile):
+// an attached file — see storageService.uploadExamRequestFile / uploadExamResultFile):
 //         processingStatus ('pending' | 'processing' | 'completed' | 'failed'),
 //         processingError,
 //         requestedExams: [{ name, notes }]     (doctor's request PDF)
-//         extractedValues: [{ metricKey, label, value, unit }]  (patient's result PDF)
+//         extractedValues: [{ biomarkerType, label, value, unit }]  (patient's result)
 
-export async function getExams(uid) {
-  const q = query(collection(db, 'users', uid, 'exams'), orderBy('scheduledDate', 'asc'))
-  const snapshot = await getDocs(q)
-  return snapshot.docs.map((d) => {
-    const data = d.data()
-    return { id: d.id, ...data, scheduledDate: data.scheduledDate?.toDate?.() || null }
-  })
+export function toExam(d) {
+  const data = d.data()
+  return {
+    id: d.id,
+    ...data,
+    scheduledDate: data.scheduledDate?.toDate?.() || null,
+    submittedAt: data.submittedAt?.toDate?.() || null,
+  }
+}
+
+// Sorted in memory so the query stays equality-only — see careTeamService.
+function sortByScheduledDate(exams) {
+  return exams.sort((a, b) => (a.scheduledDate?.getTime() ?? Infinity) - (b.scheduledDate?.getTime() ?? Infinity))
+}
+
+function patientExamsQuery(patientId) {
+  return query(collection(db, 'exams'), where('patientId', '==', patientId))
+}
+
+export async function getExams(patientId) {
+  const snapshot = await getDocs(patientExamsQuery(patientId))
+  return sortByScheduledDate(snapshot.docs.map(toExam))
 }
 
 // Live version — used where the UI should reflect processingStatus changing
 // in the background (e.g. PlanPage), without the user needing to refresh.
-export function subscribeToExams(uid, callback, onError) {
-  const q = query(collection(db, 'users', uid, 'exams'), orderBy('scheduledDate', 'asc'))
-  return onSnapshot(q, (snapshot) => {
-    callback(
-      snapshot.docs.map((d) => {
-        const data = d.data()
-        return { id: d.id, ...data, scheduledDate: data.scheduledDate?.toDate?.() || null }
-      })
-    )
-  }, onError)
+export function subscribeToExams(patientId, callback, onError) {
+  return onSnapshot(
+    patientExamsQuery(patientId),
+    (snapshot) => callback(sortByScheduledDate(snapshot.docs.map(toExam))),
+    onError
+  )
 }
 
-export async function addExam(uid, exam) {
-  const docRef = await addDoc(collection(db, 'users', uid, 'exams'), {
+export async function addExam(patientId, exam) {
+  const docRef = await addDoc(collection(db, 'exams'), {
+    kind: 'request',
     ...exam,
+    patientId,
     scheduledDate: exam.scheduledDate ? Timestamp.fromDate(exam.scheduledDate) : null,
   })
   return docRef.id
 }
 
-export async function updateExamStatus(uid, examId, status) {
-  await setDoc(doc(db, 'users', uid, 'exams', examId), { status }, { merge: true })
+export async function updateExamStatus(examId, status) {
+  await setDoc(doc(db, 'exams', examId), { status }, { merge: true })
 }
 
-// Called after the PDF upload succeeds. Deliberately does NOT touch
+// Called after the file upload succeeds. Deliberately does NOT touch
 // processingStatus — see the matching comment in conductsService.
-export async function attachExamFile(uid, examId, { attachmentUrl, attachmentFileName }) {
-  await setDoc(doc(db, 'users', uid, 'exams', examId), { attachmentUrl, attachmentFileName }, { merge: true })
+export async function attachExamFile(examId, { attachmentUrl, attachmentFileName }) {
+  await setDoc(doc(db, 'exams', examId), { attachmentUrl, attachmentFileName }, { merge: true })
 }
 
-export async function markExamUploadFailed(uid, examId) {
+export async function markExamUploadFailed(examId) {
   await setDoc(
-    doc(db, 'users', uid, 'exams', examId),
+    doc(db, 'exams', examId),
     { processingStatus: 'failed', processingError: 'upload_failed' },
     { merge: true }
   )

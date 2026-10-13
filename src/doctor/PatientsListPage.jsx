@@ -25,8 +25,9 @@ import {
 } from '../services/careTeamService'
 import { listPatients } from '../services/userDirectoryService'
 import { getUserProfile } from '../services/profileService'
+import { getPatientIdsWithPendingReview } from '../services/examReviewService'
 
-const isConfirmed = (p) => p.status !== 'pending'
+const isConfirmed = (p) => p.status === 'confirmed'
 const isIncomingRequest = (p) => p.status === 'pending' && p.initiatedBy === 'patient'
 const isOutgoingRequest = (p) => p.status === 'pending' && p.initiatedBy === 'doctor'
 
@@ -58,21 +59,19 @@ export default function PatientsListPage({ doctorUid, doctorProfile, onBack }) {
 
   const loadPatients = () => {
     if (!doctorUid) return
-    getDoctorPatients(doctorUid)
-      .then(async (list) => {
+    Promise.all([getDoctorPatients(doctorUid), getPatientIdsWithPendingReview(doctorUid)])
+      .then(async ([list, pendingReviewIds]) => {
         // Enrich with age from each patient's profile — one extra read per
         // patient, acceptable at this scale; worth a denormalized field on
-        // the patients doc if the roster grows much larger.
-        const withAge = await Promise.all(
+        // the careLinks doc if the roster grows much larger.
+        const enriched = await Promise.all(
           list.map(async (p) => {
-            if (isConfirmed(p)) {
-              const profile = await getUserProfile(p.patientUid).catch(() => null)
-              return { ...p, age: calculateAge(profile?.dateOfBirth) }
-            }
-            return p
+            if (!isConfirmed(p)) return p
+            const profile = await getUserProfile(p.patientId).catch(() => null)
+            return { ...p, age: calculateAge(profile?.dateOfBirth), hasPendingReview: pendingReviewIds.has(p.patientId) }
           })
         )
-        setPatients(withAge)
+        setPatients(enriched)
       })
       .catch(() => setError('Não foi possível carregar seus pacientes.'))
   }
@@ -133,10 +132,10 @@ export default function PatientsListPage({ doctorUid, doctorProfile, onBack }) {
   if (filter === 'alertas') visiblePatients = visiblePatients.filter((p) => p.hasPendingReview)
   if (search.trim()) {
     const q = search.trim().toLowerCase()
-    visiblePatients = visiblePatients.filter((p) => p.name?.toLowerCase().includes(q))
+    visiblePatients = visiblePatients.filter((p) => p.patientName?.toLowerCase().includes(q))
   }
 
-  const alreadyKnownUids = new Set(all.map((p) => p.patientUid))
+  const alreadyKnownUids = new Set(all.map((p) => p.patientId))
   const availablePatients = patientOptions.filter((p) => !alreadyKnownUids.has(p.uid))
 
   if (sendingPrescriptionTo) {
@@ -153,8 +152,8 @@ export default function PatientsListPage({ doctorUid, doctorProfile, onBack }) {
   if (viewingDetailFor) {
     return (
       <PatientDetailPage
-        patientUid={viewingDetailFor.patientUid}
-        patientName={viewingDetailFor.name}
+        patientUid={viewingDetailFor.patientId}
+        patientName={viewingDetailFor.patientName}
         onBack={() => setViewingDetailFor(null)}
       />
     )
@@ -210,25 +209,25 @@ export default function PatientsListPage({ doctorUid, doctorProfile, onBack }) {
             Solicitações pendentes
           </Typography>
           {incomingRequests.map((req) => (
-            <Box key={req.patientUid} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', py: 1 }}>
+            <Box key={req.id} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', py: 1 }}>
               <Box>
-                <Typography sx={{ fontWeight: 600, color: '#2b2338' }}>{req.name}</Typography>
+                <Typography sx={{ fontWeight: 600, color: '#2b2338' }}>{req.patientName}</Typography>
                 <Typography variant="body2" sx={{ color: '#7a7186' }}>
                   quer adicionar você à equipe de cuidado
                 </Typography>
               </Box>
               <Box sx={{ display: 'flex', gap: 1 }}>
-                {respondingTo === req.patientUid ? (
+                {respondingTo === req.patientId ? (
                   <CircularProgress size={20} sx={{ color: '#634879' }} />
                 ) : (
                   <>
-                    <Button size="small" onClick={() => handleRespond(req.patientUid, false)} sx={{ color: '#7a7186', textTransform: 'none' }}>
+                    <Button size="small" onClick={() => handleRespond(req.patientId, false)} sx={{ color: '#7a7186', textTransform: 'none' }}>
                       Recusar
                     </Button>
                     <Button
                       size="small"
                       variant="contained"
-                      onClick={() => handleRespond(req.patientUid, true)}
+                      onClick={() => handleRespond(req.patientId, true)}
                       sx={{ backgroundColor: '#634879', textTransform: 'none', '&:hover': { backgroundColor: '#4f3a63' } }}
                     >
                       Aceitar
@@ -325,7 +324,7 @@ export default function PatientsListPage({ doctorUid, doctorProfile, onBack }) {
               />
             </Box>
             <Box>
-              <Typography sx={{ fontWeight: 600, color: '#2b2338' }}>{p.name}</Typography>
+              <Typography sx={{ fontWeight: 600, color: '#2b2338' }}>{p.patientName}</Typography>
               <Typography variant="caption" sx={{ color: '#7a7186' }}>
                 {[p.age ? `${p.age} anos` : null, p.hasPendingReview ? 'Ação necessária' : 'Em acompanhamento']
                   .filter(Boolean)
@@ -346,10 +345,10 @@ export default function PatientsListPage({ doctorUid, doctorProfile, onBack }) {
             CONVITES ENVIADOS
           </Typography>
           {outgoingRequests.map((req) => (
-            <Card key={req.patientUid} sx={{ borderRadius: 4, p: 1.6, mt: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Card key={req.id} sx={{ borderRadius: 4, p: 1.6, mt: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
                 <Avatar sx={{ width: 44, height: 44 }}>👤</Avatar>
-                <Typography sx={{ fontWeight: 600, color: '#2b2338' }}>{req.name}</Typography>
+                <Typography sx={{ fontWeight: 600, color: '#2b2338' }}>{req.patientName}</Typography>
               </Box>
               <Chip label="Aguardando confirmação" size="small" sx={{ backgroundColor: '#f0eef3', color: '#7a7186', fontWeight: 600 }} />
             </Card>

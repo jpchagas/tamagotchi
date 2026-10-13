@@ -1,130 +1,116 @@
-import { collection, doc, addDoc, setDoc, deleteDoc, getDocs, orderBy, query, where, writeBatch, onSnapshot } from 'firebase/firestore'
+import { collection, doc, addDoc, setDoc, deleteDoc, getDocs, query, where, onSnapshot, Timestamp } from 'firebase/firestore'
 import { db } from '../firebase'
 
-// Collection: users/{uid}/careTeam/{memberId}
-// Common fields: name, memberType ('doctor' | 'nurse' | 'family'), phone
-// Doctor-only: specialty, crm, doctorUid (set when linked via search, see below)
-// Nurse-only: specialty (e.g. "Enfermagem domiciliar")
-// Family-only: relationship (e.g. "Filha", "Cônjuge")
+// --- Patient <-> Doctor links ---
+// Collection: careLinks/{patientId}_{doctorId}
+// Fields: patientId, doctorId, status ('pending' | 'confirmed'),
+//         initiatedBy ('patient' | 'doctor'), createdAt, confirmedAt,
+//         plus display copies of the names so lists don't need a profile read
+//         per row: patientName, doctorName, doctorSpecialty, doctorCrm
+//
+// This is a request/confirmation flow: whoever initiates writes 'pending',
+// and the *other* party confirms. The deterministic id keeps it idempotent —
+// re-requesting the same pair just overwrites the same document.
 
-export async function getCareTeam(uid) {
-  const q = query(collection(db, 'users', uid, 'careTeam'), orderBy('name', 'asc'))
-  const snapshot = await getDocs(q)
-  return snapshot.docs.map((d) => ({ id: d.id, ...d.data() }))
+export function careLinkId(patientId, doctorId) {
+  return `${patientId}_${doctorId}`
 }
 
-export async function addCareTeamMember(uid, member) {
-  const docRef = await addDoc(collection(db, 'users', uid, 'careTeam'), member)
-  return docRef.id
+function formatCrm(profile) {
+  if (!profile.crm) return ''
+  return `CRM ${profile.crm}${profile.crmState ? '/' + profile.crmState : ''}`
 }
 
-export async function updateCareTeamMember(uid, memberId, updates) {
-  await setDoc(doc(db, 'users', uid, 'careTeam', memberId), updates, { merge: true })
-}
-
-export async function removeCareTeamMember(uid, memberId) {
-  await deleteDoc(doc(db, 'users', uid, 'careTeam', memberId))
-}
-
-// Groups a flat list into { doctor: [...], nurse: [...], family: [...] }
-export function groupByMemberType(members) {
-  return members.reduce(
-    (acc, m) => {
-      const key = acc[m.memberType] ? m.memberType : 'other'
-      acc[key] = acc[key] || []
-      acc[key].push(m)
-      return acc
-    },
-    { doctor: [], nurse: [], family: [], other: [] }
-  )
-}
-
-// --- Patient <-> Doctor linking (both are real users, found via search) ---
-// This is a request/confirmation flow, not an instant link: whoever
-// initiates writes status 'pending' to both sides, and the *other* party
-// must call confirmLink before it becomes 'confirmed'. Using the other
-// person's uid as the doc id keeps this idempotent — re-requesting the same
-// pair just overwrites the same two documents.
-//   users/{patientUid}/careTeam/{doctorUid}  -> shows up on the patient's Equipe médica
-//   users/{doctorUid}/patients/{patientUid}  -> shows up on the doctor's patient list
-// Both docs carry: status ('pending' | 'confirmed'), initiatedBy ('patient' | 'doctor')
 export async function requestPatientDoctorLink({ patientUid, patientProfile, doctorUid, doctorProfile, initiatedBy }) {
-  const batch = writeBatch(db)
-
-  const careTeamRef = doc(db, 'users', patientUid, 'careTeam', doctorUid)
-  batch.set(
-    careTeamRef,
+  await setDoc(
+    doc(db, 'careLinks', careLinkId(patientUid, doctorUid)),
     {
-      memberType: 'doctor',
-      name: doctorProfile.fullName,
-      specialty: doctorProfile.specialty || '',
-      crm: doctorProfile.crm ? `CRM ${doctorProfile.crm}${doctorProfile.crmState ? '/' + doctorProfile.crmState : ''}` : '',
-      doctorUid,
+      patientId: patientUid,
+      doctorId: doctorUid,
+      patientName: patientProfile.fullName || '',
+      doctorName: doctorProfile.fullName || '',
+      doctorSpecialty: doctorProfile.specialty || '',
+      doctorCrm: formatCrm(doctorProfile),
       status: 'pending',
       initiatedBy,
+      createdAt: Timestamp.now(),
     },
     { merge: true }
   )
-
-  const patientRef = doc(db, 'users', doctorUid, 'patients', patientUid)
-  batch.set(
-    patientRef,
-    {
-      name: patientProfile.fullName,
-      patientUid,
-      status: 'pending',
-      initiatedBy,
-    },
-    { merge: true }
-  )
-
-  await batch.commit()
 }
 
 // Called by whichever side did NOT initiate the request.
 export async function confirmPatientDoctorLink(patientUid, doctorUid) {
-  const batch = writeBatch(db)
-  batch.set(doc(db, 'users', patientUid, 'careTeam', doctorUid), { status: 'confirmed' }, { merge: true })
-  batch.set(doc(db, 'users', doctorUid, 'patients', patientUid), { status: 'confirmed' }, { merge: true })
-  await batch.commit()
+  await setDoc(
+    doc(db, 'careLinks', careLinkId(patientUid, doctorUid)),
+    { status: 'confirmed', confirmedAt: Timestamp.now() },
+    { merge: true }
+  )
 }
 
 export async function declinePatientDoctorLink(patientUid, doctorUid) {
-  const batch = writeBatch(db)
-  batch.delete(doc(db, 'users', patientUid, 'careTeam', doctorUid))
-  batch.delete(doc(db, 'users', doctorUid, 'patients', patientUid))
-  await batch.commit()
+  await deleteDoc(doc(db, 'careLinks', careLinkId(patientUid, doctorUid)))
 }
 
 export async function unlinkPatientAndDoctor(patientUid, doctorUid) {
   return declinePatientDoctorLink(patientUid, doctorUid)
 }
 
-export async function getDoctorPatients(doctorUid) {
-  const q = query(collection(db, 'users', doctorUid, 'patients'), orderBy('name', 'asc'))
-  const snapshot = await getDocs(q)
-  return snapshot.docs.map((d) => ({ id: d.id, ...d.data() }))
+const byName = (field) => (a, b) => (a[field] || '').localeCompare(b[field] || '')
+
+// Queries in this app filter on equality only and sort in memory, so
+// Firestore can serve them from its automatic single-field indexes (no
+// composite index definitions to deploy).
+export async function getPatientCareLinks(patientId) {
+  const snapshot = await getDocs(query(collection(db, 'careLinks'), where('patientId', '==', patientId)))
+  return snapshot.docs.map((d) => ({ id: d.id, ...d.data() })).sort(byName('doctorName'))
+}
+
+export async function getDoctorPatients(doctorId) {
+  const snapshot = await getDocs(query(collection(db, 'careLinks'), where('doctorId', '==', doctorId)))
+  return snapshot.docs.map((d) => ({ id: d.id, ...d.data() })).sort(byName('patientName'))
 }
 
 // --- Real-time pending-request counts, for notification badges ---
 // "Incoming" means the request needs *this* person's confirmation — i.e.
-// it was initiated by the other party. Used to badge the bell icon and the
-// Equipe médica / Pacientes bottom-nav tabs live, without polling.
+// it was initiated by the other party.
 
-export function subscribeToIncomingRequestsForPatient(patientUid, callback) {
+export function subscribeToIncomingRequestsForPatient(patientId, callback) {
   const q = query(
-    collection(db, 'users', patientUid, 'careTeam'),
+    collection(db, 'careLinks'),
+    where('patientId', '==', patientId),
     where('status', '==', 'pending'),
     where('initiatedBy', '==', 'doctor')
   )
   return onSnapshot(q, (snapshot) => callback(snapshot.docs.map((d) => ({ id: d.id, ...d.data() }))))
 }
 
-export function subscribeToIncomingRequestsForDoctor(doctorUid, callback) {
+export function subscribeToIncomingRequestsForDoctor(doctorId, callback) {
   const q = query(
-    collection(db, 'users', doctorUid, 'patients'),
+    collection(db, 'careLinks'),
+    where('doctorId', '==', doctorId),
     where('status', '==', 'pending'),
     where('initiatedBy', '==', 'patient')
   )
   return onSnapshot(q, (snapshot) => callback(snapshot.docs.map((d) => ({ id: d.id, ...d.data() }))))
+}
+
+// --- Care contacts that are not app users (nurses, family) ---
+// Collection: careContacts/{contactId}
+// Fields: patientId, name, memberType ('nurse' | 'family'), phone,
+//         specialty (nurse, e.g. "Enfermagem domiciliar"),
+//         relationship (family, e.g. "Filha")
+
+export async function getCareContacts(patientId) {
+  const snapshot = await getDocs(query(collection(db, 'careContacts'), where('patientId', '==', patientId)))
+  return snapshot.docs.map((d) => ({ id: d.id, ...d.data() })).sort(byName('name'))
+}
+
+export async function addCareContact(patientId, contact) {
+  const docRef = await addDoc(collection(db, 'careContacts'), { ...contact, patientId })
+  return docRef.id
+}
+
+export async function removeCareContact(contactId) {
+  await deleteDoc(doc(db, 'careContacts', contactId))
 }

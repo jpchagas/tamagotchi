@@ -12,7 +12,7 @@ import HealthPage from './pages/HealthPage'
 import TimelinePage from './pages/TimelinePage'
 import PlanPage from './pages/PlanPage'
 import TeamPage from './pages/TeamPage'
-import MetricPage from './pages/MetricPage'
+import RiskPage from './pages/RiskPage'
 import SubmitExamResultPage from './pages/SubmitExamResultPage'
 import AppBottomNav from './pages/AppBottomNav'
 import DoctorHomePage from './doctor/DoctorHomePage'
@@ -27,7 +27,7 @@ import { subscribeToIncomingRequestsForPatient, subscribeToIncomingRequestsForDo
 
 function PatientApp({ profile, uid, onLogout }) {
   const [section, setSection] = useState('saude')
-  const [openCondition, setOpenCondition] = useState(null)
+  const [openRisk, setOpenRisk] = useState(null)
   const [submittingExam, setSubmittingExam] = useState(false)
   const [pendingRequestsCount, setPendingRequestsCount] = useState(0)
   const firstName = profile?.fullName?.split(' ')[0] || 'Paciente'
@@ -40,8 +40,8 @@ function PatientApp({ profile, uid, onLogout }) {
     return unsubscribe
   }, [uid])
 
-  if (openCondition) {
-    return <MetricPage conditionId={openCondition} onBack={() => setOpenCondition(null)} />
+  if (openRisk) {
+    return <RiskPage uid={uid} riskType={openRisk} onBack={() => setOpenRisk(null)} />
   }
 
   if (submittingExam) {
@@ -54,7 +54,7 @@ function PatientApp({ profile, uid, onLogout }) {
         <HealthPage
           userName={firstName}
           uid={uid}
-          onOpenCondition={setOpenCondition}
+          onOpenRisk={setOpenRisk}
           onLogout={onLogout}
           pendingRequestsCount={pendingRequestsCount}
         />

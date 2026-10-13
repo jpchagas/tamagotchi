@@ -1,0 +1,184 @@
+rules_version = '2';
+
+// Every collection is at the root and points at its owner through
+// patientId / doctorId (see docs/CODEBASE_MAP.md). A patient owns their
+// data; a doctor can read a patient's data only through a confirmed
+// careLinks/{patientId}_{doctorId} doc. The Cloud Function and the seed
+// scripts use the Admin SDK, which bypasses these rules.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function me() {
+      return request.auth.uid;
+    }
+
+    function confirmedLink(patientId, doctorId) {
+      let path = /databases/$(database)/documents/careLinks/$(patientId + '_' + doctorId);
+      return exists(path) && get(path).data.status == 'confirmed';
+    }
+
+    // The patient themself, or a doctor with a confirmed link to them.
+    function canReadPatient(patientId) {
+      return signedIn() && (me() == patientId || confirmedLink(patientId, me()));
+    }
+
+    function changed() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+
+    // Fields only the Cloud Function writes. The one exception is the
+    // client marking a still-pending upload as failed (mark*UploadFailed).
+    function processingUntouched() {
+      return !changed().hasAny(['processingStatus', 'processingError', 'processedAt',
+                                'medications', 'requestedExams', 'extractedValues']);
+    }
+
+    function markingUploadFailed() {
+      return resource.data.processingStatus == 'pending'
+        && request.resource.data.processingStatus == 'failed'
+        && request.resource.data.processingError == 'upload_failed'
+        && changed().hasOnly(['processingStatus', 'processingError']);
+    }
+
+    // On create the client may only start a document at 'pending' (or with
+    // no document at all).
+    function validNewProcessing() {
+      let data = request.resource.data;
+      return (!('processingStatus' in data) || data.processingStatus == 'pending')
+        && !data.keys().hasAny(['processingError', 'processedAt', 'medications', 'requestedExams', 'extractedValues']);
+    }
+
+    function ownersUnchanged() {
+      return !changed().hasAny(['patientId', 'doctorId']);
+    }
+
+    // --- Profiles ---
+    // Any signed-in user can read profiles: the doctor/patient search lists
+    // users by role. The role can't be changed after it is set.
+    match /users/{uid} {
+      allow read: if signedIn();
+      allow create: if signedIn() && me() == uid;
+      allow update: if signedIn() && me() == uid && !changed().hasAny(['role']);
+    }
+
+    // --- Patient <-> doctor links ---
+    match /careLinks/{linkId} {
+      function participant(data) {
+        return me() == data.patientId || me() == data.doctorId;
+      }
+
+      allow read: if signedIn() && participant(resource.data);
+
+      // Either side can request; the id must be {patientId}_{doctorId},
+      // the doctor must really be a doctor, and initiatedBy must name the
+      // side that is writing.
+      allow create: if signedIn()
+        && linkId == request.resource.data.patientId + '_' + request.resource.data.doctorId
+        && request.resource.data.status == 'pending'
+        && ((me() == request.resource.data.patientId && request.resource.data.initiatedBy == 'patient')
+            || (me() == request.resource.data.doctorId && request.resource.data.initiatedBy == 'doctor'))
+        && get(/databases/$(database)/documents/users/$(request.resource.data.doctorId)).data.role == 'doctor';
+
+      // Confirm: only the side that did NOT initiate, pending -> confirmed.
+      // Re-request: the initiator rewriting a still-pending request.
+      allow update: if signedIn() && participant(resource.data)
+        && !changed().hasAny(['patientId', 'doctorId', 'initiatedBy'])
+        && (
+          (resource.data.status == 'pending'
+            && request.resource.data.status == 'confirmed'
+            && changed().hasOnly(['status', 'confirmedAt'])
+            && ((resource.data.initiatedBy == 'patient' && me() == resource.data.doctorId)
+                || (resource.data.initiatedBy == 'doctor' && me() == resource.data.patientId)))
+          ||
+          (resource.data.status == 'pending'
+            && request.resource.data.status == 'pending'
+            && ((resource.data.initiatedBy == 'patient' && me() == resource.data.patientId)
+                || (resource.data.initiatedBy == 'doctor' && me() == resource.data.doctorId)))
+        );
+
+      // Decline or unlink: either side.
+      allow delete: if signedIn() && participant(resource.data);
+    }
+
+    // --- Nurses and family (not app users) ---
+    match /careContacts/{contactId} {
+      allow read, delete: if signedIn() && resource.data.patientId == me();
+      allow create: if signedIn() && request.resource.data.patientId == me();
+      allow update: if signedIn() && resource.data.patientId == me() && !changed().hasAny(['patientId']);
+    }
+
+    // --- Prescriptions / plan items ---
+    match /conducts/{conductId} {
+      allow read: if canReadPatient(resource.data.patientId);
+
+      // A linked doctor sending a prescription, or the patient adding their own item.
+      allow create: if signedIn() && validNewProcessing()
+        && (
+          (request.resource.data.doctorId == me() && confirmedLink(request.resource.data.patientId, me()))
+          || (request.resource.data.patientId == me() && !('doctorId' in request.resource.data))
+        );
+
+      // Patient (e.g. mark done) or the doctor who sent it (attach file).
+      allow update: if signedIn()
+        && (resource.data.patientId == me() || resource.data.doctorId == me())
+        && ownersUnchanged()
+        && (processingUntouched() || markingUploadFailed());
+    }
+
+    // --- Exam requests (doctor -> patient) and results (patient -> doctor) ---
+    match /exams/{examId} {
+      // The review queue query (doctorId == me) is covered by the second clause.
+      allow read: if canReadPatient(resource.data.patientId)
+        || (signedIn() && resource.data.doctorId == me());
+
+      allow create: if signedIn() && validNewProcessing()
+        && (
+          // Doctor requesting an exam for a linked patient.
+          (request.resource.data.kind == 'request'
+            && request.resource.data.doctorId == me()
+            && confirmedLink(request.resource.data.patientId, me()))
+          // Patient submitting a result to a linked doctor.
+          || (request.resource.data.kind == 'result'
+            && request.resource.data.patientId == me()
+            && request.resource.data.reviewStatus == 'not_reviewed'
+            && confirmedLink(me(), request.resource.data.doctorId))
+          // Patient adding their own exam to the agenda.
+          || (request.resource.data.kind == 'request'
+            && request.resource.data.patientId == me()
+            && !('doctorId' in request.resource.data))
+        );
+
+      // Only the reviewing doctor can change reviewStatus.
+      allow update: if signedIn()
+        && (resource.data.patientId == me() || resource.data.doctorId == me())
+        && ownersUnchanged()
+        && (processingUntouched() || markingUploadFailed())
+        && (!changed().hasAny(['reviewStatus']) || resource.data.doctorId == me());
+    }
+
+    // --- Biomarkers ---
+    // Exam-extracted ones are written by the Cloud Function; a patient can
+    // add their own manual readings.
+    match /biomarkers/{biomarkerId} {
+      allow read: if canReadPatient(resource.data.patientId);
+      allow create: if signedIn()
+        && request.resource.data.patientId == me()
+        && request.resource.data.source == 'manual';
+    }
+
+    match /biomarkerTypes/{key} {
+      allow read: if signedIn();
+    }
+
+    // --- Risks ---
+    // Read-only for clients: risks are calculated server-side (nothing
+    // calculates them yet; the seed scripts write them with the Admin SDK).
+    match /risks/{riskId} {
+      allow read: if canReadPatient(resource.data.patientId);
+    }
+  }
+}

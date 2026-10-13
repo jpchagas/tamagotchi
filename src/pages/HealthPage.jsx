@@ -16,65 +16,60 @@ import SpaIcon from '@mui/icons-material/Spa'
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth'
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward'
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward'
-import { getAllMetricReadingsGrouped, getLatestAndPrevious } from '../services/metricsService'
+import BloodtypeIcon from '@mui/icons-material/Bloodtype'
+import { getBiomarkersGrouped, getBiomarkerTypes, computeChange } from '../services/biomarkersService'
+import { getLatestRisks, riskTypeLabel, formatRiskValue, RISK_CATEGORIES } from '../services/risksService'
+import { getConducts, getNextPendingConduct, formatRelativeDate } from '../services/conductsService'
 
-const CONDITIONS = [
-  {
-    id: 'cardiovascular',
-    label: 'Cardiovascular',
-    status: 'Em acompanhamento',
-    statusColor: '#e08a3c',
-    icon: <FavoriteIcon sx={{ color: '#e08a3c' }} />,
-  },
-  {
-    id: 'cerebro',
-    label: 'Cérebro',
-    status: 'Ótimo',
-    statusColor: '#3ba55c',
-    icon: <PsychologyIcon sx={{ color: '#3ba55c' }} />,
-  },
-  {
-    id: 'oncologico',
-    label: 'Risco oncológico',
-    status: '1 achado que exige ação',
-    statusColor: '#d64545',
-    icon: <CoronavirusIcon sx={{ color: '#d64545' }} />,
-  },
-  {
-    id: 'metabolico',
-    label: 'Metabólico',
-    status: 'Melhorando',
-    statusColor: '#3ba55c',
-    icon: <SpaIcon sx={{ color: '#3ba55c' }} />,
-  },
-]
-
-// Metrics shown in "O que mudou", in display order, with formatting rules.
-const CHANGE_METRICS = [
-  { key: 'apob', label: 'ApoB', mode: 'percent' },
-  { key: 'gorduraVisceral', label: 'Gordura visceral', mode: 'percent' },
-  { key: 'hba1c', label: 'HbA1c', mode: 'stable' },
-]
-
-function computeChange(readings) {
-  const { latest, previous } = getLatestAndPrevious(readings)
-  if (!latest || !previous) return null
-  const diff = latest.value - previous.value
-  const percent = previous.value !== 0 ? (diff / previous.value) * 100 : 0
-  return { diff, percent, direction: diff < 0 ? 'down' : diff > 0 ? 'up' : 'flat' }
+const RISK_ICONS = {
+  cardiovascular: FavoriteIcon,
+  diabetes: BloodtypeIcon,
+  metabolico: SpaIcon,
+  oncologico: CoronavirusIcon,
+  cerebral: PsychologyIcon,
 }
 
-export default function HealthPage({ userName = 'Paciente', uid, onOpenCondition, onLogout, pendingRequestsCount = 0 }) {
-  const [readingsByMetric, setReadingsByMetric] = useState(null)
+const NEUTRAL_COLOR = '#7a7186'
+
+// "O que mudou": the biomarkers whose latest reading is most recent,
+// among those with at least two readings to compare.
+const CHANGE_TILE_COUNT = 3
+
+function recentChanges(readingsByType, biomarkerTypes) {
+  return Object.entries(readingsByType)
+    .map(([key, readings]) => {
+      const type = biomarkerTypes[key]
+      const change = computeChange(readings, type?.goodDirection)
+      return change && { key, label: type?.label || key, change }
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.change.latest.recordedAt - a.change.latest.recordedAt)
+    .slice(0, CHANGE_TILE_COUNT)
+}
+
+function attentionSummary(risks) {
+  if (risks.length === 0) return { text: 'Nenhum risco calculado ainda.', color: NEUTRAL_COLOR }
+  const high = risks.filter((r) => r.category === 'alto').length
+  if (high === 0) return { text: 'Nenhuma área exige atenção agora', color: '#3ba55c' }
+  return { text: `${high} ${high > 1 ? 'áreas precisam' : 'área precisa'} da sua atenção`, color: '#d64545' }
+}
+
+export default function HealthPage({ userName = 'Paciente', uid, onOpenRisk, onLogout, pendingRequestsCount = 0 }) {
+  const [data, setData] = useState(null)
   const [error, setError] = useState('')
 
   useEffect(() => {
     if (!uid) return
     let cancelled = false
 
-    getAllMetricReadingsGrouped(uid)
-      .then((grouped) => {
-        if (!cancelled) setReadingsByMetric(grouped)
+    Promise.all([getLatestRisks(uid), getBiomarkersGrouped(uid), getBiomarkerTypes(), getConducts(uid)])
+      .then(([risks, readingsByType, biomarkerTypes, conducts]) => {
+        if (cancelled) return
+        setData({
+          risks,
+          changes: recentChanges(readingsByType, biomarkerTypes),
+          nextConduct: getNextPendingConduct(conducts),
+        })
       })
       .catch(() => {
         if (!cancelled) setError('Não foi possível carregar seus dados de saúde.')
@@ -85,7 +80,8 @@ export default function HealthPage({ userName = 'Paciente', uid, onOpenCondition
     }
   }, [uid])
 
-  const sonoChange = readingsByMetric ? computeChange(readingsByMetric.sono) : null
+  const loading = !data && !error
+  const summary = data ? attentionSummary(data.risks) : null
 
   return (
     <Box sx={{ p: 2, pb: 10, backgroundColor: '#f7f5fa', minHeight: '100vh' }}>
@@ -115,38 +111,55 @@ export default function HealthPage({ userName = 'Paciente', uid, onOpenCondition
         <Typography sx={{ fontWeight: 700, color: '#2b2338', mb: 0.3 }}>
           Sua saúde hoje
         </Typography>
-        <Typography variant="body2" sx={{ color: '#d64545', fontWeight: 600, mb: 1.5 }}>
-          2 áreas precisam da sua atenção
-        </Typography>
 
-        {CONDITIONS.map((c) => (
-          <Box
-            key={c.id}
-            onClick={() => onOpenCondition?.(c.id)}
-            sx={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              py: 1.2,
-              borderBottom: '1px solid #f0eef3',
-              cursor: 'pointer',
-              '&:last-of-type': { borderBottom: 'none' },
-            }}
-          >
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.2 }}>
-              {c.icon}
-              <Typography sx={{ color: '#2b2338', fontWeight: 500 }}>
-                {c.label}
-              </Typography>
+        {error && (
+          <Typography variant="body2" sx={{ color: '#d64545', mb: 1 }}>
+            {error}
+          </Typography>
+        )}
+
+        {loading ? (
+          [0, 1, 2].map((i) => <Skeleton key={i} variant="text" sx={{ height: 40 }} />)
+        ) : (
+          summary && (
+            <Typography variant="body2" sx={{ color: summary.color, fontWeight: 600, mb: 1.5 }}>
+              {summary.text}
+            </Typography>
+          )
+        )}
+
+        {data?.risks.map((risk) => {
+          const Icon = RISK_ICONS[risk.riskType] || FavoriteIcon
+          const color = RISK_CATEGORIES[risk.category]?.color || NEUTRAL_COLOR
+          return (
+            <Box
+              key={risk.id}
+              onClick={() => onOpenRisk?.(risk.riskType)}
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                py: 1.2,
+                borderBottom: '1px solid #f0eef3',
+                cursor: 'pointer',
+                '&:last-of-type': { borderBottom: 'none' },
+              }}
+            >
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.2 }}>
+                <Icon sx={{ color }} />
+                <Typography sx={{ color: '#2b2338', fontWeight: 500 }}>
+                  {riskTypeLabel(risk.riskType)}
+                </Typography>
+              </Box>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                <Typography variant="body2" sx={{ color, fontWeight: 600 }}>
+                  {formatRiskValue(risk)}
+                </Typography>
+                <ChevronRightIcon sx={{ color: '#c9c2d1', fontSize: 18 }} />
+              </Box>
             </Box>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-              <Typography variant="body2" sx={{ color: c.statusColor, fontWeight: 600 }}>
-                {c.status}
-              </Typography>
-              <ChevronRightIcon sx={{ color: '#c9c2d1', fontSize: 18 }} />
-            </Box>
-          </Box>
-        ))}
+          )
+        })}
       </Card>
 
       {/* O que mudou */}
@@ -155,58 +168,25 @@ export default function HealthPage({ userName = 'Paciente', uid, onOpenCondition
           O que mudou
         </Typography>
 
-        {error && (
-          <Typography variant="body2" sx={{ color: '#d64545', mb: 1 }}>
-            {error}
-          </Typography>
-        )}
-
-        {!readingsByMetric && !error ? (
-          <Box sx={{ display: 'flex', gap: 1.5, mb: 1.5 }}>
+        {loading ? (
+          <Box sx={{ display: 'flex', gap: 1.5 }}>
             {[0, 1, 2].map((i) => (
               <Skeleton key={i} variant="rounded" sx={{ flex: 1, height: 64, borderRadius: 3 }} />
             ))}
           </Box>
+        ) : data && data.changes.length === 0 ? (
+          <Typography variant="body2" sx={{ color: NEUTRAL_COLOR }}>
+            Ainda não há duas medições de um mesmo indicador para comparar.
+          </Typography>
         ) : (
-          <Box sx={{ display: 'flex', gap: 1.5, mb: 1.5 }}>
-            {CHANGE_METRICS.map((m) => {
-              const change = readingsByMetric ? computeChange(readingsByMetric[m.key]) : null
-              if (!change) {
-                return <MetricTile key={m.key} label={m.label} value="—" flat />
-              }
-              if (m.mode === 'stable' && change.direction === 'flat') {
-                return <MetricTile key={m.key} label={m.label} value="Estável" flat />
-              }
-              const displayValue = `${Math.abs(Math.round(change.percent))}%`
-              return (
-                <MetricTile
-                  key={m.key}
-                  label={m.label}
-                  value={displayValue}
-                  direction={change.direction}
-                />
-              )
-            })}
-          </Box>
-        )}
-
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Typography variant="body2" sx={{ color: '#7a7186' }}>Sono</Typography>
-          {sonoChange ? (
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.3 }}>
-              {sonoChange.direction === 'down' ? (
-                <ArrowDownwardIcon sx={{ fontSize: 14, color: '#3ba55c' }} />
-              ) : (
-                <ArrowUpwardIcon sx={{ fontSize: 14, color: '#3ba55c' }} />
-              )}
-              <Typography variant="body2" sx={{ color: '#3ba55c', fontWeight: 600 }}>
-                {Math.abs(Math.round(sonoChange.diff))} min/noite
-              </Typography>
+          data && (
+            <Box sx={{ display: 'flex', gap: 1.5 }}>
+              {data.changes.map(({ key, label, change }) => (
+                <MetricTile key={key} label={label} change={change} />
+              ))}
             </Box>
-          ) : (
-            <Typography variant="body2" sx={{ color: '#b3aebb' }}>—</Typography>
-          )}
-        </Box>
+          )
+        )}
       </Card>
 
       {/* Próxima melhor ação */}
@@ -225,20 +205,34 @@ export default function HealthPage({ userName = 'Paciente', uid, onOpenCondition
           <Typography variant="caption" sx={{ color: '#634879', fontWeight: 700 }}>
             PRÓXIMA MELHOR AÇÃO
           </Typography>
-          <Typography sx={{ color: '#2b2338', fontWeight: 600 }}>
-            Repetir ApoB + perfil lipídico
-          </Typography>
-          <Typography variant="body2" sx={{ color: '#7a7186' }}>
-            Em 23 dias
-          </Typography>
+          {loading ? (
+            <Skeleton variant="text" sx={{ width: 180 }} />
+          ) : data?.nextConduct ? (
+            <>
+              <Typography sx={{ color: '#2b2338', fontWeight: 600 }}>
+                {data.nextConduct.title}
+              </Typography>
+              <Typography variant="body2" sx={{ color: NEUTRAL_COLOR }}>
+                {formatRelativeDate(data.nextConduct.dueDate)}
+              </Typography>
+            </>
+          ) : (
+            <Typography sx={{ color: '#2b2338', fontWeight: 600 }}>
+              Nenhuma ação pendente
+            </Typography>
+          )}
         </Box>
       </Card>
     </Box>
   )
 }
 
-function MetricTile({ label, value, direction, flat }) {
-  const isDown = direction === 'down'
+// Green when the change is an improvement, red when it's a worsening,
+// neutral when the biomarker type doesn't say which way is better.
+function MetricTile({ label, change }) {
+  const flat = change.direction === 'flat'
+  const color = change.improving === null ? NEUTRAL_COLOR : change.improving ? '#3ba55c' : '#d64545'
+  const Arrow = change.direction === 'down' ? ArrowDownwardIcon : ArrowUpwardIcon
   return (
     <Box
       sx={{
@@ -249,16 +243,14 @@ function MetricTile({ label, value, direction, flat }) {
         textAlign: 'center',
       }}
     >
-      <Typography variant="caption" sx={{ color: '#7a7186' }}>
+      <Typography variant="caption" sx={{ color: NEUTRAL_COLOR }}>
         {label}
       </Typography>
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 0.3 }}>
-        {!flat && (isDown ? (
-          <ArrowDownwardIcon sx={{ fontSize: 14, color: '#3ba55c' }} />
-        ) : (
-          <ArrowUpwardIcon sx={{ fontSize: 14, color: '#3ba55c' }} />
-        ))}
-        <Typography sx={{ fontWeight: 700, color: '#3ba55c' }}>{value}</Typography>
+        {!flat && <Arrow sx={{ fontSize: 14, color }} />}
+        <Typography sx={{ fontWeight: 700, color: flat ? NEUTRAL_COLOR : color }}>
+          {flat ? 'Estável' : `${Math.abs(Math.round(change.percent))}%`}
+        </Typography>
       </Box>
     </Box>
   )

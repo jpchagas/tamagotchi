@@ -1,123 +1,73 @@
-import { collection, doc, setDoc, getDocs, onSnapshot, query, where, orderBy, Timestamp, writeBatch } from 'firebase/firestore'
+import { collection, doc, setDoc, getDocs, onSnapshot, query, where, Timestamp } from 'firebase/firestore'
 import { db } from '../firebase'
+import { toExam } from './examsService'
 
-// A patient submitting an exam result writes to two places, same pattern as
-// careTeamService's patient<->doctor linking:
-//   users/{patientUid}/exams/{examId}         -> the exam itself (shows in patient's Agenda)
-//   users/{doctorUid}/examReviews/{examId}    -> a lightweight pointer so the doctor
-//                                                can list pending reviews across ALL
-//                                                their patients without a collectionGroup query
-// Both copies carry reviewStatus ('not_reviewed' | 'reviewed'), category, and
-// (once a file is attached) processingStatus — kept in sync by the functions
-// below. The same examId is used in both places.
+// Exam results a patient submits for a doctor to review. They are ordinary
+// docs in the root `exams` collection (kind 'result') carrying both
+// patientId and doctorId, so the patient's Agenda and the doctor's review
+// queue read the same document — there is no copy to keep in sync.
 //
 // This is a TWO-STEP flow, not one write: the doc must exist (with a real
 // examId) *before* the file is uploaded, because the Storage path embeds
 // that examId so the Cloud Function knows which doc to update. See
-// storageService.uploadExamResultFile and functions/index.js.
-//
-// users/{doctorUid}/patients/{patientUid} also gets a denormalized
-// hasPendingReview flag, so the Pacientes list can show an alert indicator
-// without querying exams per-patient on every render.
+// storageService.uploadExamResultFile and functions/index.js. After the
+// upload, attach the file with examsService.attachExamFile (or
+// markExamUploadFailed if it didn't make it).
 
 export async function createExamResultDraft({ patientUid, patientProfile, doctorUid, doctorName, title, category }) {
-  const examRef = doc(collection(db, 'users', patientUid, 'exams'))
-  const examId = examRef.id
+  const examRef = doc(collection(db, 'exams'))
   const submittedAt = Timestamp.now()
 
-  const batch = writeBatch(db)
-
-  batch.set(examRef, {
+  await setDoc(examRef, {
+    patientId: patientUid,
+    patientName: patientProfile?.fullName || '',
+    doctorId: doctorUid,
+    doctorName,
+    kind: 'result',
     title,
     status: 'realizado',
     priority: 'rotina',
     icon: 'lab',
     category: category || 'documento',
     scheduledDate: submittedAt,
-    doctorUid,
-    doctorName,
-    reviewStatus: 'not_reviewed',
-    processingStatus: 'pending',
-  })
-
-  batch.set(doc(db, 'users', doctorUid, 'examReviews', examId), {
-    examId,
-    patientUid,
-    patientName: patientProfile?.fullName || '',
-    title,
-    category: category || 'documento',
-    reviewStatus: 'not_reviewed',
-    processingStatus: 'pending',
     submittedAt,
+    reviewStatus: 'not_reviewed',
+    processingStatus: 'pending',
   })
 
-  batch.set(doc(db, 'users', doctorUid, 'patients', patientUid), { hasPendingReview: true }, { merge: true })
-
-  await batch.commit()
-  return examId
+  return examRef.id
 }
 
-// Called after the file upload succeeds. Deliberately does NOT touch
-// processingStatus (set to 'pending' in createExamResultDraft, before the
-// upload) — only the Cloud Function moves it forward from there.
-export async function attachExamResultFile(patientUid, doctorUid, examId, { attachmentUrl, attachmentFileName }) {
-  const batch = writeBatch(db)
-  const fields = { attachmentUrl, attachmentFileName }
-  batch.set(doc(db, 'users', patientUid, 'exams', examId), fields, { merge: true })
-  batch.set(doc(db, 'users', doctorUid, 'examReviews', examId), fields, { merge: true })
-  await batch.commit()
+export async function markExamReviewed(examId) {
+  await setDoc(doc(db, 'exams', examId), { reviewStatus: 'reviewed' }, { merge: true })
 }
 
-export async function markExamResultUploadFailed(patientUid, doctorUid, examId) {
-  const batch = writeBatch(db)
-  const fields = { processingStatus: 'failed', processingError: 'upload_failed' }
-  batch.set(doc(db, 'users', patientUid, 'exams', examId), fields, { merge: true })
-  batch.set(doc(db, 'users', doctorUid, 'examReviews', examId), fields, { merge: true })
-  await batch.commit()
+function doctorResultsQuery(doctorId) {
+  return query(collection(db, 'exams'), where('doctorId', '==', doctorId), where('kind', '==', 'result'))
 }
 
-export async function markExamReviewed(doctorUid, patientUid, examId) {
-  const batch = writeBatch(db)
-  batch.set(doc(db, 'users', patientUid, 'exams', examId), { reviewStatus: 'reviewed' }, { merge: true })
-  batch.set(doc(db, 'users', doctorUid, 'examReviews', examId), { reviewStatus: 'reviewed' }, { merge: true })
-  await batch.commit()
+const newestFirst = (reviews) => reviews.sort((a, b) => (b.submittedAt?.getTime() ?? 0) - (a.submittedAt?.getTime() ?? 0))
 
-  // Recompute the flag: does this patient still have any other pending review?
-  const remaining = await getDocs(
-    query(
-      collection(db, 'users', doctorUid, 'examReviews'),
-      where('patientUid', '==', patientUid),
-      where('reviewStatus', '==', 'not_reviewed')
-    )
-  )
-  await setDoc(
-    doc(db, 'users', doctorUid, 'patients', patientUid),
-    { hasPendingReview: remaining.size > 0 },
-    { merge: true }
-  )
-}
-
-export async function getDoctorExamReviews(doctorUid) {
-  const q = query(collection(db, 'users', doctorUid, 'examReviews'), orderBy('submittedAt', 'desc'))
-  const snapshot = await getDocs(q)
-  return snapshot.docs.map((d) => {
-    const data = d.data()
-    return { id: d.id, ...data, submittedAt: data.submittedAt?.toDate?.() || null }
-  })
+export async function getDoctorExamReviews(doctorId) {
+  const snapshot = await getDocs(doctorResultsQuery(doctorId))
+  return newestFirst(snapshot.docs.map(toExam))
 }
 
 // Live version — so ExamesPage reflects processingStatus changing in the
 // background (the Cloud Function runs asynchronously, on its own schedule).
-export function subscribeToDoctorExamReviews(doctorUid, callback, onError) {
-  const q = query(collection(db, 'users', doctorUid, 'examReviews'), orderBy('submittedAt', 'desc'))
-  return onSnapshot(q, (snapshot) => {
-    callback(
-      snapshot.docs.map((d) => {
-        const data = d.data()
-        return { id: d.id, ...data, submittedAt: data.submittedAt?.toDate?.() || null }
-      })
-    )
-  }, onError)
+export function subscribeToDoctorExamReviews(doctorId, callback, onError) {
+  return onSnapshot(
+    doctorResultsQuery(doctorId),
+    (snapshot) => callback(newestFirst(snapshot.docs.map(toExam))),
+    onError
+  )
+}
+
+// Replaces the old denormalized `hasPendingReview` flag: one query over the
+// doctor's results gives the set of patients with something to review.
+export async function getPatientIdsWithPendingReview(doctorId) {
+  const reviews = await getDoctorExamReviews(doctorId)
+  return new Set(reviews.filter((r) => r.reviewStatus === 'not_reviewed').map((r) => r.patientId))
 }
 
 export function groupByReviewStatus(reviews) {

@@ -17,7 +17,8 @@ import { getUserProfile } from '../services/profileService'
 import { subscribeToExams, groupByStatus, formatRelativeDate as examRelativeDate } from '../services/examsService'
 import { subscribeToConducts, groupByTimeframe, formatRelativeDate as conductRelativeDate } from '../services/conductsService'
 import { ProcessingStatusChip, ExtractedDataPanel } from '../components/DocumentProcessing'
-import { getAllMetricReadingsGrouped, getLatestAndPrevious, getMetricDefinitions } from '../services/metricsService'
+import { getBiomarkersGrouped, getBiomarkerTypes, computeChange } from '../services/biomarkersService'
+import { getLatestRisks, riskTypeLabel, formatRiskValue, RISK_CATEGORIES } from '../services/risksService'
 
 const REVIEW_STATUS_STYLE = {
   not_reviewed: { label: 'Não revisado', color: '#e08a3c', bg: '#fdf1e6' },
@@ -47,8 +48,9 @@ export default function PatientDetailPage({ patientUid, patientName, onBack }) {
   const [profile, setProfile] = useState(null)
   const [exams, setExams] = useState(null)
   const [conducts, setConducts] = useState(null)
-  const [readingsByMetric, setReadingsByMetric] = useState(null)
-  const [metricDefinitions, setMetricDefinitions] = useState({})
+  const [readingsByType, setReadingsByType] = useState(null)
+  const [biomarkerTypes, setBiomarkerTypes] = useState({})
+  const [risks, setRisks] = useState([])
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -60,13 +62,15 @@ export default function PatientDetailPage({ patientUid, patientName, onBack }) {
 
     Promise.all([
       getUserProfile(patientUid),
-      getAllMetricReadingsGrouped(patientUid),
-      getMetricDefinitions(),
+      getBiomarkersGrouped(patientUid),
+      getBiomarkerTypes(),
+      getLatestRisks(patientUid),
     ])
-      .then(([profileData, readings, definitions]) => {
+      .then(([profileData, readings, types, latestRisks]) => {
         setProfile(profileData)
-        setReadingsByMetric(readings)
-        setMetricDefinitions(Object.fromEntries(definitions.map((d) => [d.key, d])))
+        setReadingsByType(readings)
+        setBiomarkerTypes(types)
+        setRisks(latestRisks)
       })
       .catch(onError)
 
@@ -149,6 +153,22 @@ export default function PatientDetailPage({ patientUid, patientName, onBack }) {
 
         {profile && tab === 'overview' && (
           <>
+            <Typography sx={{ fontWeight: 700, color: '#2b2338', mb: 1 }}>Riscos</Typography>
+            {risks.length === 0 ? (
+              <Typography variant="body2" sx={{ color: '#7a7186', mb: 2 }}>Nenhum risco calculado.</Typography>
+            ) : (
+              <Card sx={{ borderRadius: 3, p: 1.6, mb: 2 }}>
+                {risks.map((r) => (
+                  <Box key={r.id} sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5 }}>
+                    <Typography variant="body2" sx={{ color: '#2b2338', fontWeight: 600 }}>{riskTypeLabel(r.riskType)}</Typography>
+                    <Typography variant="body2" sx={{ color: RISK_CATEGORIES[r.category]?.color || '#2b2338', fontWeight: 600 }}>
+                      {formatRiskValue(r)} · {r.model}
+                    </Typography>
+                  </Box>
+                ))}
+              </Card>
+            )}
+
             <Typography sx={{ fontWeight: 700, color: '#2b2338', mb: 1 }}>Últimos exames</Typography>
             {recentExams.length === 0 ? (
               <Typography variant="body2" sx={{ color: '#7a7186', mb: 2 }}>Nenhum exame registrado.</Typography>
@@ -189,7 +209,7 @@ export default function PatientDetailPage({ patientUid, patientName, onBack }) {
         )}
 
         {profile && tab === 'history' && (
-          <HistoryTab readingsByMetric={readingsByMetric} metricDefinitions={metricDefinitions} />
+          <HistoryTab readingsByType={readingsByType} biomarkerTypes={biomarkerTypes} />
         )}
       </Box>
     </Box>
@@ -297,30 +317,32 @@ function ConductsTab({ conducts }) {
   )
 }
 
-function HistoryTab({ readingsByMetric, metricDefinitions }) {
-  const metricKeys = Object.keys(readingsByMetric || {})
-  if (metricKeys.length === 0) {
+function HistoryTab({ readingsByType, biomarkerTypes }) {
+  const keys = Object.keys(readingsByType || {})
+  if (keys.length === 0) {
     return <Typography variant="body2" sx={{ color: '#7a7186' }}>Nenhum indicador registrado ainda.</Typography>
   }
 
   return (
     <>
-      {metricKeys.map((key) => {
-        const { latest, previous } = getLatestAndPrevious(readingsByMetric[key])
-        if (!latest) return null
-        const diff = previous ? latest.value - previous.value : 0
-        const def = metricDefinitions[key]
+      {keys.map((key) => {
+        const readings = readingsByType[key]
+        const latest = readings[readings.length - 1]
+        const type = biomarkerTypes[key]
+        const change = computeChange(readings, type?.goodDirection)
+        const arrowColor = !change || change.improving === null ? '#7a7186' : change.improving ? '#3ba55c' : '#e08a3c'
+        const unit = type?.unit || latest.unit
         return (
           <Card key={key} sx={{ borderRadius: 3, p: 1.6, mb: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Typography sx={{ fontWeight: 600, color: '#2b2338' }}>{def?.label || key}</Typography>
+            <Typography sx={{ fontWeight: 600, color: '#2b2338' }}>{type?.label || key}</Typography>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-              {previous && diff !== 0 && (
-                diff < 0
-                  ? <ArrowDownwardIcon sx={{ fontSize: 14, color: '#3ba55c' }} />
-                  : <ArrowUpwardIcon sx={{ fontSize: 14, color: '#e08a3c' }} />
+              {change && change.direction !== 'flat' && (
+                change.direction === 'down'
+                  ? <ArrowDownwardIcon sx={{ fontSize: 14, color: arrowColor }} />
+                  : <ArrowUpwardIcon sx={{ fontSize: 14, color: arrowColor }} />
               )}
               <Typography sx={{ fontWeight: 700, color: '#2b2338' }}>
-                {latest.value}{def?.unit ? ` ${def.unit}` : ''}
+                {latest.value}{unit ? ` ${unit}` : ''}
               </Typography>
             </Box>
           </Card>

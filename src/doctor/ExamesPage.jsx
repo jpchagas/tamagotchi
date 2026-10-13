@@ -39,7 +39,7 @@ export default function ExamesPage({ uid }) {
   const handleMarkReviewed = async (review) => {
     setReviewingId(review.id)
     try {
-      await markExamReviewed(uid, review.patientUid, review.examId)
+      await markExamReviewed(review.id)
     } catch {
       setError('Não foi possível marcar como revisado. Tente novamente.')
     } finally {

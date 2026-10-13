@@ -6,21 +6,44 @@ import IconButton from '@mui/material/IconButton'
 import Badge from '@mui/material/Badge'
 import NotificationsNoneIcon from '@mui/icons-material/NotificationsNone'
 import LogoutIcon from '@mui/icons-material/Logout'
-import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward'
 import ScienceOutlinedIcon from '@mui/icons-material/ScienceOutlined'
-import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined'
-import EventRepeatOutlinedIcon from '@mui/icons-material/EventRepeatOutlined'
-import AssignmentOutlinedIcon from '@mui/icons-material/AssignmentOutlined'
+import PersonAddAltOutlinedIcon from '@mui/icons-material/PersonAddAltOutlined'
+import MonitorHeartOutlinedIcon from '@mui/icons-material/MonitorHeartOutlined'
 import { getDoctorPatients } from '../services/careTeamService'
+import { getDoctorExamReviews } from '../services/examReviewService'
+import { getLatestRisksForPatients, riskTypeLabel } from '../services/risksService'
 
-const ALERTS = [
-  { icon: <ScienceOutlinedIcon sx={{ color: '#634879' }} />, label: 'ApoB acima da meta', count: '6 pacientes' },
-  { icon: <DescriptionOutlinedIcon sx={{ color: '#634879' }} />, label: 'Exames de imagem', count: '3 pacientes' },
-  { icon: <EventRepeatOutlinedIcon sx={{ color: '#634879' }} />, label: 'Retorno de consulta', count: '4 pacientes' },
-  { icon: <AssignmentOutlinedIcon sx={{ color: '#634879' }} />, label: 'Prescrições a revisar', count: '2 pacientes' },
-]
+const ICON_SX = { color: '#634879' }
 
-function StatCard({ label, value, delta, deltaColor = '#3ba55c', onClick }) {
+function pluralPatients(n) {
+  return `${n} paciente${n > 1 ? 's' : ''}`
+}
+
+// Everything on the dashboard is derived from three reads: the doctor's
+// confirmed careLinks, their exam results, and those patients' latest risks.
+async function loadDashboard(doctorId) {
+  const [links, reviews] = await Promise.all([getDoctorPatients(doctorId), getDoctorExamReviews(doctorId)])
+  const patientIds = links.filter((l) => l.status === 'confirmed').map((l) => l.patientId)
+  const risks = patientIds.length > 0 ? await getLatestRisksForPatients(patientIds) : []
+
+  const pendingReviews = reviews.filter((r) => r.reviewStatus === 'not_reviewed')
+  const highRiskPatientsByType = {}
+  risks
+    .filter((r) => r.category === 'alto')
+    .forEach((r) => {
+      highRiskPatientsByType[r.riskType] = highRiskPatientsByType[r.riskType] || new Set()
+      highRiskPatientsByType[r.riskType].add(r.patientId)
+    })
+
+  return {
+    patientCount: patientIds.length,
+    pendingReviewCount: pendingReviews.length,
+    pendingReviewPatientCount: new Set(pendingReviews.map((r) => r.patientId)).size,
+    highRiskPatientsByType,
+  }
+}
+
+function StatCard({ label, value, onClick }) {
   return (
     <Card
       onClick={onClick}
@@ -32,29 +55,34 @@ function StatCard({ label, value, delta, deltaColor = '#3ba55c', onClick }) {
       <Typography sx={{ fontWeight: 700, color: '#2b2338', fontSize: '1.8rem' }}>
         {value}
       </Typography>
-      {delta && (
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.3, mt: 0.3 }}>
-          <ArrowUpwardIcon sx={{ fontSize: 14, color: deltaColor }} />
-          <Typography variant="caption" sx={{ color: deltaColor, fontWeight: 600 }}>
-            {delta}
-          </Typography>
-        </Box>
-      )}
     </Card>
   )
 }
 
 export default function DoctorHomePage({ doctorName = 'Ricardo', uid, onLogout, onOpenPatients, pendingRequestsCount = 0 }) {
-  const [patientCount, setPatientCount] = useState(null)
+  const [dashboard, setDashboard] = useState(null)
 
   useEffect(() => {
     if (!uid) return
-    getDoctorPatients(uid)
-      .then((patients) => setPatientCount(patients.filter((p) => p.status !== 'pending').length))
+    loadDashboard(uid)
+      .then(setDashboard)
       .catch(() => {
-        // Non-fatal — falls back to the placeholder dash below.
+        // Non-fatal — the cards fall back to the placeholder dash below.
       })
   }, [uid])
+
+  const show = (value) => (dashboard ? String(value) : '—')
+
+  const alerts = []
+  if (dashboard?.pendingReviewPatientCount > 0) {
+    alerts.push({ icon: <ScienceOutlinedIcon sx={ICON_SX} />, label: 'Exames a revisar', count: pluralPatients(dashboard.pendingReviewPatientCount) })
+  }
+  if (pendingRequestsCount > 0) {
+    alerts.push({ icon: <PersonAddAltOutlinedIcon sx={ICON_SX} />, label: 'Solicitações de vínculo', count: pluralPatients(pendingRequestsCount) })
+  }
+  Object.entries(dashboard?.highRiskPatientsByType || {}).forEach(([riskType, patients]) => {
+    alerts.push({ icon: <MonitorHeartOutlinedIcon sx={ICON_SX} />, label: `Risco ${riskTypeLabel(riskType).toLowerCase()} alto`, count: pluralPatients(patients.size) })
+  })
 
   return (
     <Box sx={{ p: 2, pb: 10, backgroundColor: '#f7f5fa', minHeight: '100vh' }}>
@@ -82,22 +110,26 @@ export default function DoctorHomePage({ doctorName = 'Ricardo', uid, onLogout, 
       <Box sx={{ display: 'flex', gap: 1.5, mb: 1.5 }}>
         <StatCard
           label="Pacientes em acompanhamento"
-          value={patientCount !== null ? String(patientCount) : '—'}
+          value={show(dashboard?.patientCount)}
           onClick={onOpenPatients}
         />
-        <StatCard label="Pendências" value="37" delta="1,5% do total" deltaColor="#e08a3c" />
+        <StatCard label="Pendências" value={show((dashboard?.pendingReviewCount ?? 0) + pendingRequestsCount)} />
       </Box>
 
       <Box sx={{ display: 'flex', gap: 1.5, mb: 2 }}>
-        <StatCard label="Exames a revisar" value="12" />
-        <StatCard label="Consultas hoje" value="8" />
+        <StatCard label="Exames a revisar" value={show(dashboard?.pendingReviewCount)} />
+        {/* No appointments collection yet. */}
+        <StatCard label="Consultas hoje" value="—" />
       </Box>
 
       <Card sx={{ borderRadius: 4, p: 2 }}>
         <Typography sx={{ fontWeight: 700, color: '#2b2338', mb: 1.5 }}>
           Alertas e pendências
         </Typography>
-        {ALERTS.map((a, i) => (
+        {dashboard && alerts.length === 0 && (
+          <Typography variant="body2" sx={{ color: '#7a7186' }}>Nenhum alerta no momento.</Typography>
+        )}
+        {alerts.map((a, i) => (
           <Box
             key={i}
             sx={{
@@ -105,7 +137,7 @@ export default function DoctorHomePage({ doctorName = 'Ricardo', uid, onLogout, 
               alignItems: 'center',
               justifyContent: 'space-between',
               py: 1.1,
-              borderBottom: i < ALERTS.length - 1 ? '1px solid #f0eef3' : 'none',
+              borderBottom: i < alerts.length - 1 ? '1px solid #f0eef3' : 'none',
             }}
           >
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.2 }}>
