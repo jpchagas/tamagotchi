@@ -20,10 +20,15 @@ export const RISK_TYPES = {
   cerebral: { label: 'Cérebro' },
 }
 
+// `tone` names a status style in src/components/ui.jsx (TONES).
 export const RISK_CATEGORIES = {
-  baixo: { label: 'Baixo', color: '#3ba55c', bg: '#e6f5ea' },
-  moderado: { label: 'Moderado', color: '#e08a3c', bg: '#fdf1e6' },
-  alto: { label: 'Alto', color: '#d64545', bg: '#fdeceb' },
+  baixo: { label: 'Baixo', tone: 'good' },
+  moderado: { label: 'Moderado', tone: 'warn' },
+  alto: { label: 'Alto', tone: 'alert' },
+}
+
+export function riskTone(risk) {
+  return RISK_CATEGORIES[risk?.category]?.tone || 'neutral'
 }
 
 export function riskTypeLabel(riskType) {

@@ -11,9 +11,9 @@ export default defineConfig({
       manifest: {
         name: 'Tamagotchi',
         short_name: 'Tamagotchi',
-        description: 'Your virtual pet',
-        theme_color: '#634879',
-        background_color: '#dcbced',
+        description: 'Acompanhe sua saúde com a sua equipe médica',
+        theme_color: '#F6F3F9',
+        background_color: '#F6F3F9',
         display: 'standalone',
         orientation: 'portrait',
         start_url: '/',

@@ -72,73 +72,67 @@ graph TB
     ├── pages/                  # patient screens
     ├── doctor/                 # doctor screens
     ├── services/               # ALL Firestore/Storage/Auth access
-    └── hooks/usePet.js         # dead (pet scaffold)
 ```
 
 ## Module Guide
 
 ### App shell
 
-| File | Purpose | Tokens |
-|------|---------|--------|
-| `src/main.jsx` | `createRoot` + `StrictMode` | 57 |
-| `src/App.jsx` | Stage state machine; local `PatientApp`, `DoctorApp`, `LoadingScreen` | 1991 |
-| `src/firebase.js` | Exports `firebaseApp`, `auth`, `db` (config hard-coded) | 239 |
-| `src/App.css` | Imported, but only pet-scaffold classes, all unused | 525 |
-| `src/index.css` | Vite template CSS | 542 |
+| File | Purpose |
+|------|---------|
+| `src/main.jsx` | `ThemeProvider` + `CssBaseline` + `ToastProvider` around `App` |
+| `src/theme.js` | MUI theme + `colors` tokens + `cardShadow`, `APP_MAX_WIDTH` (520) |
+| `src/App.jsx` | Stage state machine; local `PatientApp`, `DoctorApp` |
+| `src/firebase.js` | Exports `firebaseApp`, `auth`, `db`, `storage`; `VITE_USE_EMULATORS=true` switches to `demo-tamagotchi` + local emulators |
+| `src/index.css` | Page frame only (centered 520px column) |
 
-**Stage machine** (`stage` state): `splash → login → [forgotPassword | createAccount → selectProfile → completeProfile] → app`.
-- Splash shows for 2s regardless of auth, then `LoadingScreen` until `authChecked`.
-- `subscribeToAuthChanges`: user with a profile → `app`; user without a `users/{uid}` doc (e.g. Google/Apple first login) → `selectProfile` with `accountData` seeded from the Auth user; no user → `login`.
-- `LoginPage.onLogin` is a no-op: the transition happens through the auth subscription.
-- `app` is the fallthrough render: `role === 'doctor'` → `DoctorApp`, otherwise `PatientApp`.
-- `handleLogout` clears `role/profile/accountData` eagerly to avoid a stale-profile flash.
+**Stage machine:** `splash` (only while auth resolves) → `login` → [`forgotPassword` | `createAccount` (step 1) → `completeProfile` (step 2)] → app.
+- `subscribeToAuthChanges`: user with a profile → app; user without a `users/{uid}` doc → `completeProfile`; no user → `login`.
+- Step 1 hands App a `signupDraft` (role, name, e-mail) before creating the account, because the auth listener switches to step 2 as soon as the user exists. Without a draft (first Google/Apple login) step 2 shows the role choice.
+- `role === 'doctor'` → `DoctorApp`, otherwise `PatientApp`.
 
-**PatientApp** `section` (default `saude`), nav `AppBottomNav`:
-`saude` → HealthPage · `linhaDoTempo` → TimelinePage · `plano` → PlanPage · `equipe` → TeamPage (badge = pending link requests).
-Early-return sub-screens: `openRisk` → RiskPage, `submittingExam` → SubmitExamResultPage.
+**PatientApp** tabs (`BottomNav`): `saude` → HealthPage · `evolucao` → EvolutionPage · `plano` → PlanPage · `equipe` → TeamPage (badge = incoming link requests). The "Enviar exame" FAB (on Saúde and Plano) opens `UploadExamSheet`. Sub-screen: `openRisk` → RiskPage. Tapping a change tile on Saúde opens Evolução focused on that biomarker.
 
-**DoctorApp** `section` (default `pacientes`), nav `DoctorBottomNav`:
-`pacientes` → DoctorHomePage · `exames` → ExamesPage · `prontuario` → **PatientsListPage** (not `ProntuarioPage.jsx`) · `agenda` → AgendaPage (stub). Badge on `prontuario`.
-PatientsListPage has its own early-return sub-screens: `sendingPrescriptionTo` → SendPrescriptionPage, `viewingDetailFor` → PatientDetailPage.
+**DoctorApp** tabs: `inicio` → DoctorHomePage · `pacientes` → PatientsListPage (badge = incoming link requests) · `exames` → ExamesPage (badge = results to review). `openPatient` → PatientDetailPage (the per-patient hub), which opens SendPrescriptionPage / RequestExamPage. DoctorApp owns the one live `subscribeToDoctorExamReviews` subscription and passes `reviews` down.
 
-### components/ (auth, onboarding, shared)
+### components/ (shared UI, auth, onboarding)
 
-| File | Purpose | Services | Tokens |
-|------|---------|----------|--------|
-| `SplashScreen.jsx` | 2s animated splash | none | 358 |
-| `LoginPage.jsx` | Email/Google/Apple login; CPF login rejected client-side ("em breve") | `loginWithEmail`, `loginWithGoogle`, `loginWithApple` | 1404 |
-| `ForgotPasswordPage.jsx` | Reset email; shows success even on error (anti-enumeration, intentional) | `resetPassword` | 751 |
-| `CreateAccountPage.jsx` | Register, maps auth error codes to PT messages | `registerWithEmail` | 924 |
-| `SelectProfilePage.jsx` | Pick `patient` / `doctor` | none | 596 |
-| `CompleteProfilePage.jsx` | Role-aware profile form | `saveUserProfile` | 1774 |
-| `DocumentProcessing.jsx` | `ProcessingStatusChip({status})`, `ExtractedDataPanel({item})`; maps `processingError` codes to messages | none | 1063 |
+| File | Purpose |
+|------|---------|
+| `ui.jsx` | Building blocks: `PersonAvatar` (initials, color from name), `Pill`, `RiskIcon`, `Page`, `PageHeader`, `Section`, `GroupLabel`, `TextAction`, `RowButton` (plain row without onClick), `EmptyState`, `BottomNav`, `Segmented`, `ChoiceChips` (single or multi), `FieldLabel`, `BottomSheet`, `ActionBar`, `Sparkline` |
+| `uiHelpers.js` | `initialsOf`, `TONES` (good/warn/alert/info/brand/neutral), `changeTone`, `changeLabel` |
+| `Toast.jsx` / `toastContext.js` | `ToastProvider`; `useToast()(message, { action: { label, onClick } })` (used for "Desfazer") |
+| `AccountMenu.jsx` | Avatar button → menu with who is signed in and "Sair" |
+| `FileField.jsx` / `fileRules.js` | File chip / attach button; `validateFile` (PDF/PNG/JPEG, 14 MB — same limits as the function and storage.rules) |
+| `DocumentProcessing.jsx` | `ProcessingStatusChip({status})`, `ExtractedDataPanel({item})`; maps `processingError` codes to messages |
+| `SplashScreen.jsx` | Logo + spinner while auth resolves |
+| `LoginPage.jsx` | E-mail/password (show/hide), Google, Apple. Navigation happens through the auth listener |
+| `CreateAccountPage.jsx` | Step 1: role, name, e-mail, password with strength bar. Also exports `RoleChoice`, `StepProgress` |
+| `CompleteProfilePage.jsx` | Step 2: role-specific profile (role choice when no draft); "Sair" signs out |
+| `ForgotPasswordPage.jsx` | Reset e-mail; shows "Confira seu e-mail" even on error (anti-enumeration, intentional) |
 
 ### pages/ (patient)
 
-| File | Purpose | Services | Tokens |
-|------|---------|----------|--------|
-| `AppBottomNav.jsx` | Tabs `saude, linhaDoTempo, plano, equipe` | — | 437 |
-| `HealthPage.jsx` | Latest risk per type, the 3 most recent biomarker changes (colored by `goodDirection`), next pending conduct | `getLatestRisks`, `getBiomarkersGrouped`, `getBiomarkerTypes`, `computeChange`, `getConducts`, `getNextPendingConduct` | 2400 |
-| `RiskPage.jsx` | One risk type: current value, the `inputs` the model used, earlier calculations, model name | `getRiskHistory`, `getBiomarkerTypes` | 1300 |
-| `TimelinePage.jsx` | Recharts line charts for every biomarker type the patient has | `getBiomarkersGrouped`, `getBiomarkerTypes` | 1450 |
-| `PlanPage.jsx` | Tabs "Plano" (conducts by timeframe) / "Agenda" (exams by status) + "Enviar resultado" button | `subscribeToConducts`, `groupByTimeframe`, `subscribeToExams`, `groupByStatus` | 3158 |
-| `SubmitExamResultPage.jsx` | Patient uploads a result to a confirmed doctor. `idle → saving → uploading → done/error` | `getPatientCareLinks`, `createExamResultDraft`, `uploadExamResultFile`, `attachExamFile`, `markExamUploadFailed` | 2006 |
-| `TeamPage.jsx` | Care team (careLinks doctors + careContacts) and doctor link requests | `getPatientCareLinks`, `getCareContacts`, `request/confirm/declinePatientDoctorLink`, `listDoctors` | 2887 |
-| `WelcomePage.jsx` | **Dead** | — | 439 |
+| File | Purpose | Services |
+|------|---------|----------|
+| `HealthPage.jsx` | Hub: high-risk banner, risks (low ones collapsed), 3 most recent biomarker changes (tap → Evolução), next pending conduct with "Feito" (live) | `getLatestRisks`, `getBiomarkersGrouped`, `getBiomarkerTypes`, `computeChange`, `subscribeToConducts`, `setConductDone` |
+| `EvolutionPage.jsx` | Period switch, Recharts area chart of the focused biomarker, list of all biomarkers with sparkline and trend over the period | `getBiomarkersGrouped`, `getBiomarkerTypes` |
+| `PlanPage.jsx` | One list by period (conducts by `timeframe`, exam requests bucketed by date), tap circle = done (undo toast), rows expand to why/attachment/extracted data; "Resultados enviados" | `subscribeToConducts`, `subscribeToExams`, `setConductDone` |
+| `TeamPage.jsx` | Incoming requests (Aceitar/Recusar), doctors, pending invites, other caregivers (call button); "Adicionar" sheet: invite a doctor or add a family/caregiver contact | `getPatientCareLinks`, `getCareContacts`, `addCareContact`, link fns, `listDoctors` |
+| `UploadExamSheet.jsx` | Bottom sheet: photo or file first, doctor pre-selected when there is one, category chips, optional name (defaults from the file name). `saving → uploading` with progress | `getPatientCareLinks`, `createExamResultDraft`, `uploadExamResultFile`, `attachExamFile`, `markExamUploadFailed` |
+| `RiskPage.jsx` | One risk type: current value, inputs used, earlier calculations, model | `getRiskHistory`, `getBiomarkerTypes` |
 
 ### doctor/
 
-| File | Purpose | Services | Tokens |
-|------|---------|----------|--------|
-| `DoctorBottomNav.jsx` | Tabs `pacientes, exames, prontuario, agenda` | — | 450 |
-| `DoctorHomePage.jsx` | Dashboard: patient count, pendências, exams to review, alerts (pending reviews, link requests, high risks per type). "Consultas hoje" is "—" (no appointments yet) | `getDoctorPatients`, `getDoctorExamReviews`, `getLatestRisksForPatients` | 1500 |
-| `ExamesPage.jsx` | Exam results to review, by status/category | `subscribeToDoctorExamReviews`, `groupByReviewStatus`, `filterByCategory`, `markExamReviewed` | 1670 |
-| `PatientsListPage.jsx` | Linked patients, link requests, patient search; hosts SendPrescription/PatientDetail sub-screens. N+1 `getUserProfile` for ages; "Alertas" = has a result to review | `getDoctorPatients`, `getPatientIdsWithPendingReview`, link fns, `listPatients`, `getUserProfile` | 3417 |
-| `PatientDetailPage.jsx` | Tabs overview (risks, recent exams, next conducts)/exams/conducts/history | `getUserProfile`, `subscribeToExams`, `subscribeToConducts`, `getBiomarkersGrouped`, `getBiomarkerTypes`, `getLatestRisks` | 3600 |
-| `SendPrescriptionPage.jsx` | `kind: 'conduct' \| 'exam'` — doctor sends prescription or exam request with a file | `addConduct`/`addExam`, `uploadConductPrescriptionFile`/`uploadExamRequestFile`, `attachConductFile`/`attachExamFile`, `markConductUploadFailed`/`markExamUploadFailed` | 2661 |
-| `AgendaPage.jsx` | Static stub | — | 118 |
-| `ProntuarioPage.jsx` | **Dead** | — | 121 |
+| File | Purpose | Services |
+|------|---------|----------|
+| `DoctorHomePage.jsx` | Tappable stats (to review / high risk / link requests), first results to review, high-risk alerts | `getDoctorPatients`, `getLatestRisksForPatients` (+ `reviews` prop) |
+| `ReviewCard.jsx` | A submitted result: patient, status, extracted values, "Arquivo", "Marcar como revisado" (undo toast). Used on the dashboard, Exames and the hub | `setExamReviewed` |
+| `ExamesPage.jsx` | Category switch, results to review, reviewed list (tap → patient) | `groupByReviewStatus`, `filterByCategory` (+ `reviews` prop) |
+| `PatientsListPage.jsx` | Search, "Precisam de atenção" filter (result to review or high risk), incoming requests, invite sheet. N+1 `getUserProfile` for ages, on purpose | `getDoctorPatients`, `getLatestRisksForPatients`, link fns, `listPatients`, `getUserProfile` |
+| `PatientDetailPage.jsx` | Patient hub: "Enviar receita" / "Pedir exame", results to review, risks, indicators, active plan, requested exams, past results (live exams/conducts) | `getUserProfile`, `subscribeToExams`, `subscribeToConducts`, `getBiomarkersGrouped`, `getBiomarkerTypes`, `getLatestRisks` |
+| `SendPrescriptionPage.jsx` | Optional file, type chips, title, timeframe (also sets the due date: 7/90/365 days or none for "Contínuo"), "Por quê?" | `addConduct`, `uploadConductPrescriptionFile`, `attachConductFile`, `markConductUploadFailed` |
+| `RequestExamPage.jsx` | Multi-select common exams + custom ones, priority, deadline, optional signed request. Creates ONE exam doc titled with all chosen exams | `addExam`, `uploadExamRequestFile`, `attachExamFile`, `markExamUploadFailed` |
 
 ### services/
 
@@ -206,7 +200,7 @@ sequenceDiagram
         App->>P: getUserProfile(uid)
         App->>U: PatientApp / DoctorApp
     else user, no profile
-        App->>U: SelectProfile → CompleteProfile
+        App->>U: CompleteProfile (step 2)
         U->>P: saveUserProfile
         App->>U: app
     end
@@ -251,7 +245,9 @@ sequenceDiagram
 
 - No router: the stage/section is a string in state, and sub-screens early-return on local state.
 - Components never touch Firestore directly. Every data access goes in `src/services/`.
-- Styling is inline MUI `sx` with hard-coded brand hex values (`#dcbced`, `#bc9dda`, `#b597d2`, `#634879`). There is no theme.
+- Styling: MUI theme in `src/theme.js`; colors only through its `colors` tokens; screens built from `components/ui.jsx`. MUI v9: `slotProps`, not `InputProps` / `inputProps` / `PaperProps`.
+- Forms use functional state updates (`setForm((f) => …)`), so handlers created in an earlier render (e.g. a select menu's) don't write back stale values.
+- Successful actions confirm with a toast; reversible ones (done, reviewed) offer "Desfazer".
 - Live lists use `subscribeTo*(uid, cb, onError)` (onSnapshot). One-off reads use `get*`.
 - `group*` / `filter*` helpers in services shape the data for the UI.
 - Relationships are `patientId` / `doctorId` fields on root collections; queries are equality-only and sorted in memory.
@@ -259,11 +255,11 @@ sequenceDiagram
 
 ## Gotchas
 
-1. **Dead code:** `src/pages/WelcomePage.jsx`, `src/doctor/ProntuarioPage.jsx`, `src/hooks/usePet.js`, the pet classes in `src/App.css`, and the `react-router-dom` dependency.
+1. **Unused dependency:** `react-router-dom`.
 2. **Two biomarker-type writers:** `functions/index.js` `ensureBiomarkerType` uses `.create()` and never overwrites. `src/services/biomarkersService.js` `saveBiomarkerType` uses `setDoc(merge)`, which overwrites label/unit.
 3. Function-written `biomarkers` carry `source: 'exam'` and `examId`; client-written ones carry `source: 'manual'`.
 4. **Security rules:** `firestore.rules` / `storage.rules`. Access is checked through `patientId` / `doctorId` and, for doctors, a `get()` on `careLinks/{patientId}_{doctorId}`. That `get()` can't be evaluated over an `in` list, so `getLatestRisksForPatients` runs one query per patient. Any signed-in user can read every `users` profile (the doctor/patient search needs it), which includes CPF and phone.
-5. **Not backed by data yet:** "Consultas hoje" on DoctorHomePage and AgendaPage (no appointments collection); risk values (seed only).
+5. **Not backed by data yet:** appointments (no collection; the doctor Agenda tab was removed) and risk values (seed only). There are no notifications yet.
 6. **Stale "Gemini" references:** `functions/package.json` description and the `.gitignore` comment. The code uses Claude.
 7. **Missing icons:** the manifest references `icon-512-maskable.png` and `index.html` references `apple-touch-icon.png`, but neither file is in `public/`. The manifest description still says "Your virtual pet".
 8. The `src/firebase.js` comment mentions `VITE_FIREBASE_*` env vars, but the config is hard-coded on purpose.
@@ -272,8 +268,8 @@ sequenceDiagram
 
 ## Navigation Guide
 
-- **Add a patient screen/tab:** `src/pages/NewPage.jsx`, add the tab to `TABS` in `src/pages/AppBottomNav.jsx`, add the `section` case in `PatientApp` (`src/App.jsx`).
-- **Add a doctor screen/tab:** `src/doctor/`, `src/doctor/DoctorBottomNav.jsx`, `DoctorApp` in `src/App.jsx`.
+- **Add a patient screen/tab:** `src/pages/NewPage.jsx` built from `components/ui.jsx`, add it to `PATIENT_TABS` and the `section` cases in `PatientApp` (`src/App.jsx`).
+- **Add a doctor screen/tab:** `src/doctor/`, `DOCTOR_TABS` and `DoctorApp` in `src/App.jsx`.
 - **Add data access:** a function in the matching `src/services/*Service.js`. If both users need the data, write both trees in one `writeBatch`.
 - **Add a new extractable document kind:** a storage path helper in `storageService.js`, a matching `ROUTES` entry + schema + processor in `functions/index.js`, and rendering in `DocumentProcessing.jsx`.
 - **Change error messages / status chips:** `src/components/DocumentProcessing.jsx`.

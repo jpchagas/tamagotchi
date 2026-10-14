@@ -1,162 +1,66 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
-import Card from '@mui/material/Card'
-import Button from '@mui/material/Button'
-import Chip from '@mui/material/Chip'
-import Tabs from '@mui/material/Tabs'
-import Tab from '@mui/material/Tab'
 import Skeleton from '@mui/material/Skeleton'
-import CircularProgress from '@mui/material/CircularProgress'
-import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined'
-import { subscribeToDoctorExamReviews, groupByReviewStatus, filterByCategory, markExamReviewed } from '../services/examReviewService'
-import { ProcessingStatusChip, ExtractedDataPanel } from '../components/DocumentProcessing'
+import TaskAltIcon from '@mui/icons-material/TaskAltRounded'
+import ReviewCard from './ReviewCard'
+import { Page, PageHeader, Segmented, GroupLabel, Section, RowButton, PersonAvatar, Pill, EmptyState } from '../components/ui'
+import { colors } from '../theme'
+import { groupByReviewStatus, filterByCategory } from '../services/examReviewService'
+import { formatTimeAgo } from '../services/dateUtils'
 
-const CATEGORY_TABS = [
-  { key: 'todos', label: 'Todos' },
-  { key: 'laboratorial', label: 'Laboratoriais' },
-  { key: 'imagem', label: 'Imagem' },
-  { key: 'documento', label: 'Documentos' },
+const CATEGORIES = [
+  { value: 'todos', label: 'Todos' },
+  { value: 'laboratorial', label: 'Laboratório' },
+  { value: 'imagem', label: 'Imagem' },
+  { value: 'documento', label: 'Outros' },
 ]
 
-export default function ExamesPage({ uid }) {
-  const [reviews, setReviews] = useState(null)
+// `reviews` is DoctorApp's live subscription, so a result the Cloud
+// Function finishes reading updates here without a reload.
+export default function ExamesPage({ reviews, error, onOpenPatient }) {
   const [category, setCategory] = useState('todos')
-  const [error, setError] = useState('')
-  const [reviewingId, setReviewingId] = useState(null)
 
-  // Live: the patient's file is read by a Cloud Function in the
-  // background, and the extracted values should appear here as soon as
-  // they're ready — the doctor shouldn't have to reopen the tab.
-  useEffect(() => {
-    if (!uid) {
-      setError('Usuário não identificado.')
-      return
-    }
-    return subscribeToDoctorExamReviews(uid, setReviews, () => setError('Não foi possível carregar os exames.'))
-  }, [uid])
-
-  const handleMarkReviewed = async (review) => {
-    setReviewingId(review.id)
-    try {
-      await markExamReviewed(review.id)
-    } catch {
-      setError('Não foi possível marcar como revisado. Tente novamente.')
-    } finally {
-      setReviewingId(null)
-    }
-  }
-
-  const filtered = reviews ? filterByCategory(reviews, category) : []
-  const grouped = groupByReviewStatus(filtered)
+  const grouped = groupByReviewStatus(reviews ? filterByCategory(reviews, category) : [])
 
   return (
-    <Box sx={{ p: 2, pb: 10, backgroundColor: '#f7f5fa', minHeight: '100vh' }}>
-      <Typography sx={{ fontWeight: 700, color: '#2b2338', mb: 1.5 }}>Exames a revisar</Typography>
+    <Page>
+      <PageHeader title="Exames" subtitle="Resultados enviados pelos seus pacientes." />
+      <Segmented label="Categoria" options={CATEGORIES} value={category} onChange={setCategory} />
 
-      <Tabs
-        value={category}
-        onChange={(_, v) => setCategory(v)}
-        variant="scrollable"
-        scrollButtons={false}
-        sx={{
-          mb: 2, minHeight: 0,
-          '& .MuiTab-root': { textTransform: 'none', fontWeight: 600, color: '#7a7186', minHeight: 0, py: 1 },
-          '& .Mui-selected': { color: '#634879 !important' },
-          '& .MuiTabs-indicator': { backgroundColor: '#634879' },
-        }}
-      >
-        {CATEGORY_TABS.map((t) => (
-          <Tab key={t.key} value={t.key} label={t.label} />
-        ))}
-      </Tabs>
-
-      {error && (
-        <Typography variant="body2" sx={{ color: '#d64545', mb: 2 }}>
-          {error}
-        </Typography>
-      )}
-
-      {!reviews && !error && (
-        <>
-          {[0, 1].map((i) => (
-            <Skeleton key={i} variant="rounded" sx={{ height: 80, borderRadius: 4, mb: 1.5 }} />
-          ))}
-        </>
-      )}
+      {error && <Typography variant="body2" role="alert" sx={{ color: colors.alert, fontWeight: 600 }}>Não foi possível carregar os exames.</Typography>}
+      {!reviews && !error && [0, 1].map((i) => <Skeleton key={i} variant="rounded" height={160} sx={{ borderRadius: '22px' }} />)}
 
       {reviews && (
         <>
-          <Typography variant="caption" sx={{ color: '#b3aebb', fontWeight: 700 }}>
-            NÃO REVISADOS ({grouped.not_reviewed.length})
-          </Typography>
-
+          <GroupLabel>Para revisar ({grouped.not_reviewed.length})</GroupLabel>
           {grouped.not_reviewed.length === 0 ? (
-            <Typography variant="body2" sx={{ color: '#7a7186', mt: 1, mb: 2 }}>
-              Nenhum exame pendente de revisão nesta categoria.
-            </Typography>
+            <Section>
+              <EmptyState icon={<TaskAltIcon />} title="Tudo revisado">Nenhum resultado pendente nesta categoria.</EmptyState>
+            </Section>
           ) : (
-            grouped.not_reviewed.map((review) => (
-              <Card key={review.id} sx={{ borderRadius: 4, p: 2, mt: 1, mb: 1.5, backgroundColor: '#fdf1e6' }}>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <Box>
-                    <Typography sx={{ fontWeight: 700, color: '#2b2338' }}>{review.title}</Typography>
-                    <Typography variant="body2" sx={{ color: '#7a7186' }}>{review.patientName}</Typography>
-                  </Box>
-                  <Chip label="Não revisado" size="small" sx={{ backgroundColor: '#fde3c6', color: '#e08a3c', fontWeight: 600 }} />
-                </Box>
-
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mt: 1 }}>
-                  {review.attachmentUrl ? (
-                    <Button
-                      href={review.attachmentUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      startIcon={<DescriptionOutlinedIcon />}
-                      size="small"
-                      sx={{ color: '#634879', textTransform: 'none', p: 0, minWidth: 0 }}
-                    >
-                      Ver arquivo
-                    </Button>
-                  ) : <span />}
-                  <ProcessingStatusChip status={review.processingStatus} />
-                </Box>
-                <ExtractedDataPanel item={review} />
-
-                <Button
-                  fullWidth
-                  variant="contained"
-                  disabled={reviewingId === review.id}
-                  onClick={() => handleMarkReviewed(review)}
-                  sx={{ mt: 1.5, backgroundColor: '#634879', borderRadius: 3, py: 1, fontWeight: 600, textTransform: 'none', '&:hover': { backgroundColor: '#4f3a63' } }}
-                >
-                  {reviewingId === review.id ? <CircularProgress size={20} sx={{ color: '#fff' }} /> : 'Marcar como revisado'}
-                </Button>
-              </Card>
-            ))
+            grouped.not_reviewed.map((r) => <ReviewCard key={r.id} review={r} onOpenPatient={onOpenPatient} />)
           )}
 
-          <Typography variant="caption" sx={{ color: '#b3aebb', fontWeight: 700, mt: 1, display: 'block' }}>
-            REVISADOS
-          </Typography>
-
-          {grouped.reviewed.length === 0 ? (
-            <Typography variant="body2" sx={{ color: '#7a7186', mt: 1 }}>
-              Nenhum exame revisado nesta categoria ainda.
-            </Typography>
-          ) : (
-            grouped.reviewed.map((review) => (
-              <Card key={review.id} sx={{ borderRadius: 4, p: 1.6, mt: 1, mb: 1.2, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Box>
-                  <Typography sx={{ fontWeight: 600, color: '#2b2338' }}>{review.title}</Typography>
-                  <Typography variant="body2" sx={{ color: '#7a7186' }}>{review.patientName}</Typography>
-                </Box>
-                <Chip label="Revisado" size="small" sx={{ backgroundColor: '#e6f5ea', color: '#3ba55c', fontWeight: 600 }} />
-              </Card>
-            ))
+          {grouped.reviewed.length > 0 && (
+            <>
+              <GroupLabel>Revisados</GroupLabel>
+              <Section padded={false}>
+                {grouped.reviewed.map((r) => (
+                  <RowButton key={r.id} onClick={() => onOpenPatient({ patientId: r.patientId, patientName: r.patientName })}>
+                    <PersonAvatar name={r.patientName} size={40} />
+                    <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                      <Typography variant="subtitle1" noWrap>{r.title}</Typography>
+                      <Typography variant="body2" sx={{ color: colors.muted }} noWrap>{r.patientName} · {formatTimeAgo(r.submittedAt)}</Typography>
+                    </Box>
+                    <Pill tone="good">Revisado</Pill>
+                  </RowButton>
+                ))}
+              </Section>
+            </>
           )}
         </>
       )}
-    </Box>
+    </Page>
   )
 }

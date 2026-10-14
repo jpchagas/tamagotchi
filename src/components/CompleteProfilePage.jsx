@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import Box from '@mui/material/Box'
-import TextField from '@mui/material/TextField'
-import Button from '@mui/material/Button'
 import Typography from '@mui/material/Typography'
-import IconButton from '@mui/material/IconButton'
+import TextField from '@mui/material/TextField'
 import MenuItem from '@mui/material/MenuItem'
+import Button from '@mui/material/Button'
 import CircularProgress from '@mui/material/CircularProgress'
-import ArrowBackIcon from '@mui/icons-material/ArrowBack'
+import { PageHeader, FieldLabel, ChoiceChips, ActionBar } from './ui'
+import { RoleChoice, StepProgress } from './CreateAccountPage'
+import { colors } from '../theme'
 import { saveUserProfile } from '../services/profileService'
 
 const BR_STATES = [
@@ -15,18 +16,27 @@ const BR_STATES = [
   'SP', 'SE', 'TO',
 ]
 
-const SEX_OPTIONS = ['Feminino', 'Masculino', 'Intersexo', 'Prefiro não informar']
+const SEX_OPTIONS = ['Feminino', 'Masculino', 'Intersexo', 'Prefiro não informar'].map((v) => ({ value: v, label: v }))
 
-export default function CompleteProfilePage({ role, uid, initialData = {}, onBack, onSubmit }) {
-  const isPatient = role === 'patient'
-  const isDoctor = role === 'doctor'
+function Field({ id, label, hint, ...props }) {
+  return (
+    <Box>
+      <FieldLabel htmlFor={id} hint={hint}>{label}</FieldLabel>
+      <TextField id={id} fullWidth {...props} />
+    </Box>
+  )
+}
 
+// Step 2 of 2: profile. `role` comes from step 1; it is missing after a
+// first Google/Apple sign-in, so the role choice is shown here instead.
+export default function CompleteProfilePage({ uid, role: initialRole, initialData = {}, onCancel, onSubmit }) {
+  const [role, setRole] = useState(initialRole || 'patient')
   const [form, setForm] = useState({
     fullName: initialData.fullName || '',
     email: initialData.email || '',
     phone: '',
     dateOfBirth: '',
-    cpf: initialData.cpf || '',
+    cpf: '',
     country: 'Brasil',
     cityState: '',
     // Patient-only
@@ -41,154 +51,92 @@ export default function CompleteProfilePage({ role, uid, initialData = {}, onBac
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
-  const handleChange = (field) => (e) => setForm({ ...form, [field]: e.target.value })
+  const isDoctor = role === 'doctor'
+  const set = (field) => (e) => {
+    const { value } = e.target
+    setForm((f) => ({ ...f, [field]: value }))
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    const requiredCommon = ['fullName', 'email', 'phone', 'dateOfBirth', 'cpf', 'country', 'cityState']
+    const requiredCommon = ['fullName', 'email', 'phone', 'dateOfBirth', 'cpf', 'cityState']
     const requiredDoctor = ['crm', 'crmState', 'specialty']
-    const missingCommon = requiredCommon.some((f) => !form[f])
-    const missingDoctor = isDoctor && requiredDoctor.some((f) => !form[f])
-
-    if (missingCommon || missingDoctor) {
+    const missing = requiredCommon.some((f) => !form[f]) || (isDoctor && requiredDoctor.some((f) => !form[f]))
+    if (missing) {
       setError('Preencha os campos obrigatórios.')
       return
     }
 
     setError('')
     setLoading(true)
-    const fullProfile = { ...form, role }
+    // Only the fields that apply to the role are saved.
+    const roleFields = isDoctor
+      ? { crm: form.crm, crmState: form.crmState, specialty: form.specialty, rqe: form.rqe }
+      : { sexAssignedAtBirth: form.sexAssignedAtBirth, genderIdentity: form.genderIdentity }
+    const { fullName, email, phone, dateOfBirth, cpf, country, cityState } = form
+    const fullProfile = { role, fullName, email, phone, dateOfBirth, cpf, country, cityState, ...roleFields }
     try {
       await saveUserProfile(uid, fullProfile)
       onSubmit(fullProfile)
-    } catch (err) {
+    } catch {
       setError('Não foi possível salvar seu cadastro. Tente novamente.')
-    } finally {
       setLoading(false)
     }
   }
 
   return (
-    <Box sx={{ minHeight: '100vh', backgroundColor: '#f7f5fa', p: 3, pb: 6 }}>
-      <IconButton onClick={onBack} sx={{ mb: 1, ml: -1 }}>
-        <ArrowBackIcon sx={{ color: '#2b2338' }} />
-      </IconButton>
+    <Box component="form" onSubmit={handleSubmit} noValidate sx={{ minHeight: '100dvh', backgroundColor: colors.surface, px: 3, pt: 3, pb: 14, display: 'flex', flexDirection: 'column', gap: 2.5 }}>
+      <PageHeader
+        onBack={onCancel}
+        backLabel="Sair"
+        title={isDoctor ? 'Seus dados profissionais' : 'Sobre você'}
+        subtitle={isDoctor ? 'Seus pacientes verão nome, especialidade e CRM.' : 'Usamos isso para personalizar sua saúde.'}
+      />
+      <StepProgress step={2} />
 
-      <Typography sx={{ fontWeight: 700, fontSize: '1.4rem', color: '#2b2338', mb: 0.5 }}>
-        Complete seu cadastro
-      </Typography>
-      <Typography variant="body2" sx={{ color: '#7a7186', mb: 3 }}>
-        {isPatient
-          ? 'Só mais alguns dados para personalizar sua jornada de saúde.'
-          : 'Confirme seus dados profissionais para continuar.'}
-      </Typography>
+      {!initialRole && (
+        <Box>
+          <Typography variant="body2" sx={{ fontWeight: 700, color: colors.muted, mb: 1 }}>Como você vai usar o app?</Typography>
+          <RoleChoice value={role} onChange={setRole} />
+        </Box>
+      )}
 
-      <Box component="form" onSubmit={handleSubmit}>
-        <Typography variant="caption" sx={{ color: '#b3aebb', fontWeight: 700 }}>
-          DADOS PESSOAIS
-        </Typography>
-        <TextField fullWidth placeholder="Nome completo" value={form.fullName} onChange={handleChange('fullName')} margin="normal" sx={fieldSx} />
-        <TextField fullWidth placeholder="Email" type="email" value={form.email} onChange={handleChange('email')} margin="normal" sx={fieldSx} />
-        <TextField fullWidth placeholder="Telefone" value={form.phone} onChange={handleChange('phone')} margin="normal" sx={fieldSx} />
-        <TextField
-          fullWidth
-          label="Data de nascimento"
-          type="date"
-          value={form.dateOfBirth}
-          onChange={handleChange('dateOfBirth')}
-          margin="normal"
-          InputLabelProps={{ shrink: true }}
-          sx={fieldSx}
-        />
-        <TextField fullWidth placeholder="CPF" value={form.cpf} onChange={handleChange('cpf')} margin="normal" sx={fieldSx} />
-        <TextField fullWidth placeholder="País" value={form.country} onChange={handleChange('country')} margin="normal" sx={fieldSx} />
-        <TextField fullWidth placeholder="Cidade/Estado" value={form.cityState} onChange={handleChange('cityState')} margin="normal" sx={fieldSx} />
+      {!initialData.fullName && <Field id="cp-name" label="Nome completo" autoComplete="name" value={form.fullName} onChange={set('fullName')} />}
+      <Field id="cp-birth" label="Data de nascimento" type="date" value={form.dateOfBirth} onChange={set('dateOfBirth')} />
+      <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 1.5 }}>
+        <Field id="cp-cpf" label="CPF" slotProps={{ htmlInput: { inputMode: 'numeric' } }} value={form.cpf} onChange={set('cpf')} />
+        <Field id="cp-phone" label="Telefone" type="tel" autoComplete="tel" value={form.phone} onChange={set('phone')} />
+      </Box>
+      <Field id="cp-city" label="Cidade/UF" placeholder="São Paulo/SP" value={form.cityState} onChange={set('cityState')} />
 
-        {isPatient && (
-          <>
-            <Typography variant="caption" sx={{ color: '#b3aebb', fontWeight: 700, mt: 2, display: 'block' }}>
-              INFORMAÇÕES ADICIONAIS
-            </Typography>
-            <TextField
-              select
-              fullWidth
-              label="Sexo atribuído ao nascer"
-              value={form.sexAssignedAtBirth}
-              onChange={handleChange('sexAssignedAtBirth')}
-              margin="normal"
-              sx={fieldSx}
-            >
-              {SEX_OPTIONS.map((opt) => (
-                <MenuItem key={opt} value={opt}>{opt}</MenuItem>
-              ))}
-            </TextField>
-            <TextField
-              fullWidth
-              placeholder="Identidade de gênero (opcional)"
-              value={form.genderIdentity}
-              onChange={handleChange('genderIdentity')}
-              margin="normal"
-              helperText="Preencha apenas se for clinicamente relevante."
-              sx={fieldSx}
-            />
-          </>
-        )}
+      {isDoctor ? (
+        <>
+          <Box sx={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 1.5 }}>
+            <Field id="cp-crm" label="CRM" slotProps={{ htmlInput: { inputMode: 'numeric' } }} value={form.crm} onChange={set('crm')} />
+            <Field id="cp-crm-uf" label="UF" select value={form.crmState} onChange={set('crmState')}>
+              {BR_STATES.map((uf) => <MenuItem key={uf} value={uf}>{uf}</MenuItem>)}
+            </Field>
+          </Box>
+          <Field id="cp-specialty" label="Especialidade" placeholder="Cardiologia" value={form.specialty} onChange={set('specialty')} />
+          <Field id="cp-rqe" label="RQE" hint="(opcional)" value={form.rqe} onChange={set('rqe')} />
+        </>
+      ) : (
+        <>
+          <Box>
+            <Typography variant="body2" sx={{ fontWeight: 700, color: colors.muted, mb: 1 }}>Sexo atribuído ao nascer</Typography>
+            <ChoiceChips label="Sexo atribuído ao nascer" options={SEX_OPTIONS} value={form.sexAssignedAtBirth} onChange={(v) => setForm((f) => ({ ...f, sexAssignedAtBirth: v }))} />
+          </Box>
+          <Field id="cp-gender" label="Identidade de gênero" hint="(opcional, se for clinicamente relevante)" value={form.genderIdentity} onChange={set('genderIdentity')} />
+        </>
+      )}
 
-        {isDoctor && (
-          <>
-            <Typography variant="caption" sx={{ color: '#b3aebb', fontWeight: 700, mt: 2, display: 'block' }}>
-              DADOS PROFISSIONAIS
-            </Typography>
-            <TextField fullWidth placeholder="CRM" value={form.crm} onChange={handleChange('crm')} margin="normal" sx={fieldSx} />
-            <TextField
-              select
-              fullWidth
-              label="Estado do CRM"
-              value={form.crmState}
-              onChange={handleChange('crmState')}
-              margin="normal"
-              sx={fieldSx}
-            >
-              {BR_STATES.map((uf) => (
-                <MenuItem key={uf} value={uf}>{uf}</MenuItem>
-              ))}
-            </TextField>
-            <TextField fullWidth placeholder="Especialidade" value={form.specialty} onChange={handleChange('specialty')} margin="normal" sx={fieldSx} />
-            <TextField fullWidth placeholder="RQE (opcional)" value={form.rqe} onChange={handleChange('rqe')} margin="normal" sx={fieldSx} />
-          </>
-        )}
+      {error && <Typography variant="body2" role="alert" sx={{ color: colors.alert, fontWeight: 600 }}>{error}</Typography>}
 
-        {error && (
-          <Typography variant="body2" sx={{ color: '#d64545', mt: 1 }}>
-            {error}
-          </Typography>
-        )}
-
-        <Button
-          type="submit"
-          fullWidth
-          variant="contained"
-          disabled={loading}
-          sx={{
-            mt: 3,
-            py: 1.3,
-            borderRadius: 3,
-            backgroundColor: '#634879',
-            fontWeight: 600,
-            textTransform: 'none',
-            '&:hover': { backgroundColor: '#4f3a63' },
-          }}
-        >
+      <ActionBar>
+        <Button type="submit" fullWidth size="large" variant="contained" disabled={loading}>
           {loading ? <CircularProgress size={22} sx={{ color: '#fff' }} /> : 'Concluir cadastro'}
         </Button>
-      </Box>
+      </ActionBar>
     </Box>
   )
-}
-
-const fieldSx = {
-  '& .MuiOutlinedInput-root': {
-    borderRadius: 2,
-    backgroundColor: '#fff',
-  },
 }

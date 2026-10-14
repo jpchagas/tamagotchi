@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Despite the name "Tamagotchi", this is a Brazilian patient/doctor health-tracking PWA (UI strings, Firestore field values and Claude prompts are in Portuguese). It is a React 19 + Vite + MUI app hosted on Firebase (Auth, Firestore, Storage, Hosting), plus one Cloud Function that uses the Claude API to extract structured data from uploaded medical documents.
 
-Brand palette (also in the PWA manifest in `vite.config.js`): `#dcbced`, `#bc9dda`, `#b597d2`, `#634879` (primary). Styling is inline MUI `sx` with hard-coded hex values. There is no MUI theme.
+**Styling:** "soft clinical" look. `src/theme.js` holds the MUI theme (font Plus Jakarta Sans, loaded in `index.html`) and the color tokens (`colors.brand` = `#634879`, ground, ink, status colors) — use the tokens, never new hex values. Shared building blocks live in `src/components/ui.jsx` (Page, PageHeader, Section, RowButton, BottomNav, BottomSheet, Segmented, ChoiceChips, Pill, PersonAvatar, Sparkline, ActionBar…); plain helpers in `uiHelpers.js`. Confirmations go through `useToast()` (`toastContext.js`). MUI is v9: use `slotProps` (`input`, `htmlInput`, `paper`) — `InputProps` / `inputProps` / `PaperProps` no longer exist and are silently dropped. The app is a single phone-width column (max 520px).
 
 ## Codebase Overview
 
@@ -44,7 +44,7 @@ There is no test suite. The Firebase config is hard-coded in `src/firebase.js`, 
 
 ## Architecture
 
-**No router.** `react-router-dom` is installed but not used. `src/App.jsx` is a state machine: `splash → login → [forgotPassword | createAccount → selectProfile → completeProfile] → app`. Auth state comes from `subscribeToAuthChanges`. A user without a `users/{uid}` profile doc is sent to `selectProfile`. In the app, `role` picks `PatientApp` or `DoctorApp`, and each one switches screens with a `section` string and a bottom nav (`src/pages/AppBottomNav.jsx`, `src/doctor/DoctorBottomNav.jsx`). Sub-screens (e.g. `RiskPage`, `SubmitExamResultPage`) are shown by early-returning on local state, not by routing.
+**No router.** `react-router-dom` is installed but not used. `src/App.jsx` is a state machine: `splash (only while auth resolves) → login → [forgotPassword | createAccount (step 1: role, name, e-mail, password) → completeProfile (step 2)] → app`. Auth state comes from `subscribeToAuthChanges`; a user without a `users/{uid}` profile doc goes to `completeProfile`, which asks for the role itself when there is no step-1 draft (first Google/Apple sign-in). In the app, `role` picks `PatientApp` (tabs Saúde · Evolução · Plano · Equipe, plus the "Enviar exame" FAB → `UploadExamSheet`) or `DoctorApp` (tabs Início · Pacientes · Exames; `PatientDetailPage` is the per-patient hub that opens `SendPrescriptionPage` / `RequestExamPage`). Tabs use `BottomNav` with a `section` string; sub-screens (e.g. `RiskPage`, the patient hub) early-return on local state. `DoctorApp` holds the single live subscription to the doctor's exam results and passes it to the dashboard, the Exames tab and its badge.
 
 **Layout:** `src/components/` holds the auth/onboarding screens and shared UI, `src/pages/` the patient screens and `src/doctor/` the doctor screens. `src/services/` holds all Firestore/Storage access. Components never call Firestore directly; add new data access to a service.
 
@@ -67,5 +67,3 @@ Queries use equality filters only and sort in memory, so no composite indexes ar
 The client must never set `processingStatus` past `pending`, except the `mark*UploadFailed` helpers; only the function advances it. The storage path prefixes and the `ROUTES` regexes must stay in sync. `src/components/DocumentProcessing.jsx` renders status chips and extracted data, and maps the `processingError` codes to messages, for both patient and doctor screens.
 
 **Demo data:** the sample data lives in `src/services/demoData.js` (plain data, no Firebase imports). `functions/scripts/seed-emulators.js` (`npm run seed`) loads it into the emulators; `src/services/seedDemoData.js` adds it for one user from the browser console (`seedAllDemoData(uid)`).
-
-`WelcomePage.jsx`, `ProntuarioPage.jsx` and `hooks/usePet.js` are leftovers from the original pet-app scaffold and are not imported anywhere.

@@ -39,7 +39,11 @@ export async function createExamResultDraft({ patientUid, patientProfile, doctor
 }
 
 export async function markExamReviewed(examId) {
-  await setDoc(doc(db, 'exams', examId), { reviewStatus: 'reviewed' }, { merge: true })
+  await setExamReviewed(examId, true)
+}
+
+export async function setExamReviewed(examId, reviewed) {
+  await setDoc(doc(db, 'exams', examId), { reviewStatus: reviewed ? 'reviewed' : 'not_reviewed' }, { merge: true })
 }
 
 function doctorResultsQuery(doctorId) {

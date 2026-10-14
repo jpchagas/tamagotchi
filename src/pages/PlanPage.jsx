@@ -1,299 +1,228 @@
 import { useState, useEffect } from 'react'
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
-import Card from '@mui/material/Card'
-import Chip from '@mui/material/Chip'
 import Button from '@mui/material/Button'
+import ButtonBase from '@mui/material/ButtonBase'
+import Collapse from '@mui/material/Collapse'
 import Skeleton from '@mui/material/Skeleton'
-import ChevronRightIcon from '@mui/icons-material/ChevronRight'
-import AlarmIcon from '@mui/icons-material/Alarm'
-import MedicationIcon from '@mui/icons-material/Medication'
-import RestaurantIcon from '@mui/icons-material/Restaurant'
-import DirectionsRunIcon from '@mui/icons-material/DirectionsRun'
-import EventRepeatIcon from '@mui/icons-material/EventRepeat'
-import ScienceIcon from '@mui/icons-material/Science'
-import EventIcon from '@mui/icons-material/Event'
-import VaccinesIcon from '@mui/icons-material/Vaccines'
-import BloodtypeIcon from '@mui/icons-material/Bloodtype'
-import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined'
-import { subscribeToConducts, groupByTimeframe, formatRelativeDate as conductRelativeDate } from '../services/conductsService'
-import { subscribeToExams, groupByStatus, formatRelativeDate as examRelativeDate } from '../services/examsService'
+import LinearProgress from '@mui/material/LinearProgress'
+import CheckIcon from '@mui/icons-material/CheckRounded'
+import ScienceIcon from '@mui/icons-material/ScienceOutlined'
+import DescriptionIcon from '@mui/icons-material/DescriptionOutlined'
+import TaskAltIcon from '@mui/icons-material/TaskAltRounded'
+import { Page, PageHeader, GroupLabel, Pill, EmptyState } from '../components/ui'
 import { ProcessingStatusChip, ExtractedDataPanel } from '../components/DocumentProcessing'
+import { useToast } from '../components/toastContext'
+import { colors, cardShadow } from '../theme'
+import { subscribeToConducts, setConductDone, formatRelativeDate } from '../services/conductsService'
+import { subscribeToExams } from '../services/examsService'
+import { formatTimeAgo } from '../services/dateUtils'
 
-const PLANO_TABS = [
+const PERIODS = [
   { key: 'agora', label: 'Agora' },
   { key: 'proximos90', label: 'Próximos 90 dias' },
   { key: 'esteAno', label: 'Este ano' },
   { key: 'longoPrazo', label: 'Longo prazo' },
 ]
 
-const AGENDA_TABS = [
-  { key: 'solicitado', label: 'Solicitados' },
-  { key: 'em_andamento', label: 'Em andamento' },
-  { key: 'realizado', label: 'Realizados' },
-]
-
-const CONDUCT_ICONS = {
-  medication: <MedicationIcon sx={{ color: '#634879' }} />,
-  diet: <RestaurantIcon sx={{ color: '#634879' }} />,
-  exercise: <DirectionsRunIcon sx={{ color: '#634879' }} />,
-  followup: <EventRepeatIcon sx={{ color: '#634879' }} />,
+const CONDUCT_TAGS = {
+  medication: 'Remédio',
+  diet: 'Dieta',
+  exercise: 'Exercício',
+  followup: 'Consulta',
 }
 
-const EXAM_ICONS = {
-  lab: <ScienceIcon sx={{ color: '#634879' }} />,
-  imaging: <EventIcon sx={{ color: '#634879' }} />,
-  vaccine: <VaccinesIcon sx={{ color: '#634879' }} />,
-  blood: <BloodtypeIcon sx={{ color: '#634879' }} />,
+// Exam requests have a date, not a timeframe: bucket them the same way.
+function periodForDate(date) {
+  if (!date) return 'agora'
+  const days = (date.getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+  if (days <= 30) return 'agora'
+  if (days <= 90) return 'proximos90'
+  if (days <= 365) return 'esteAno'
+  return 'longoPrazo'
 }
 
-const PRIORITY_STYLE = {
-  prioritario: { label: 'Prioritário', color: '#d64545', bg: '#fdeceb' },
-  rotina: { label: 'Rotina', color: '#3ba55c', bg: '#e6f5ea' },
+function Item({ item, expanded, onToggleExpand, onToggleDone }) {
+  const isExam = item.kind === 'exam'
+  const done = item.done
+  const hasDetails = item.why || item.attachmentUrl || item.processingStatus
+  return (
+    <Box sx={{ borderBottom: `1px solid ${colors.line}`, '&:last-of-type': { borderBottom: 'none' } }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, px: 1.5, py: 1, minHeight: 60 }}>
+        {isExam ? (
+          <Box sx={{ width: 32, height: 32, borderRadius: '50%', backgroundColor: colors.infoBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <ScienceIcon sx={{ fontSize: 18, color: colors.info }} />
+          </Box>
+        ) : (
+          <ButtonBase
+            onClick={onToggleDone}
+            aria-label={done ? `Desmarcar: ${item.title}` : `Marcar como feito: ${item.title}`}
+            aria-pressed={done}
+            sx={{ width: 32, height: 32, borderRadius: '50%', flexShrink: 0, border: `2px solid ${done ? colors.brand : '#C9BFD4'}`, backgroundColor: done ? colors.brand : colors.surface, transition: 'all 150ms' }}
+          >
+            {done && <CheckIcon sx={{ fontSize: 18, color: '#FFFFFF' }} />}
+          </ButtonBase>
+        )}
+        <ButtonBase onClick={hasDetails ? onToggleExpand : undefined} disabled={!hasDetails} aria-expanded={hasDetails ? expanded : undefined} sx={{ flexGrow: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 1, justifyContent: 'space-between', textAlign: 'left', borderRadius: 2, py: 0.5 }}>
+          <Box sx={{ minWidth: 0 }}>
+            <Typography variant="subtitle1" sx={{ color: done ? colors.subtle : colors.ink, textDecoration: done ? 'line-through' : 'none' }}>{item.title}</Typography>
+            <Typography variant="caption" sx={{ color: colors.muted }}>{item.meta}</Typography>
+          </Box>
+          <Pill tone={isExam ? 'info' : 'brand'}>{item.tag}</Pill>
+        </ButtonBase>
+      </Box>
+      {hasDetails && (
+        <Collapse in={expanded} unmountOnExit>
+          <Box sx={{ px: 1.5, pb: 1.75, pl: 7.25 }}>
+            {item.why && <Typography variant="body2" sx={{ color: colors.muted, mb: 1 }}>{item.why}</Typography>}
+            {(item.attachmentUrl || item.processingStatus) && (
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
+                {item.attachmentUrl ? (
+                  <Button size="small" href={item.attachmentUrl} target="_blank" rel="noopener noreferrer" startIcon={<DescriptionIcon />} sx={{ minHeight: 36, px: 1 }}>
+                    {isExam ? 'Ver pedido' : 'Ver receita'}
+                  </Button>
+                ) : <span />}
+                <ProcessingStatusChip status={item.processingStatus} />
+              </Box>
+            )}
+            <ExtractedDataPanel item={item} />
+          </Box>
+        </Collapse>
+      )}
+    </Box>
+  )
 }
 
-const REVIEW_STATUS_STYLE = {
-  not_reviewed: { label: 'Não revisado', color: '#e08a3c', bg: '#fdf1e6' },
-  reviewed: { label: 'Revisado', color: '#3ba55c', bg: '#e6f5ea' },
-}
-
-export default function PlanPage({ uid, onSubmitExam }) {
-  const [view, setView] = useState('plano') // 'plano' | 'agenda'
-  const [planoTab, setPlanoTab] = useState('agora')
-  const [agendaTab, setAgendaTab] = useState('solicitado')
-
+export default function PlanPage({ uid }) {
+  const toast = useToast()
   const [conducts, setConducts] = useState(null)
   const [exams, setExams] = useState(null)
+  const [expanded, setExpanded] = useState(null)
   const [error, setError] = useState('')
 
-  // Live subscriptions (not one-off reads): document extraction runs in a
-  // Cloud Function on its own schedule, so the status chip needs to flip
-  // from "Lendo documento" to "Dados extraídos" without a refresh.
+  // Live: extraction runs in a Cloud Function on its own schedule, so a
+  // status chip flips to "Dados extraídos" without a refresh.
   useEffect(() => {
-    if (!uid) {
-      setError('Usuário não identificado.')
-      return
-    }
+    if (!uid) return
     const onError = () => setError('Não foi possível carregar seu plano.')
-    const unsubscribeConducts = subscribeToConducts(uid, (list) => setConducts(groupByTimeframe(list)), onError)
-    const unsubscribeExams = subscribeToExams(uid, (list) => setExams(groupByStatus(list)), onError)
+    const unsubscribeConducts = subscribeToConducts(uid, setConducts, onError)
+    const unsubscribeExams = subscribeToExams(uid, setExams, onError)
     return () => {
       unsubscribeConducts()
       unsubscribeExams()
     }
   }, [uid])
 
-  return (
-    <Box sx={{ p: 2, pb: 10, backgroundColor: '#f7f5fa', minHeight: '100vh' }}>
-      <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
-        <Button
-          onClick={() => setView('plano')}
-          sx={{
-            flex: 1, borderRadius: 3, textTransform: 'none', fontWeight: 700,
-            backgroundColor: view === 'plano' ? '#634879' : '#fff',
-            color: view === 'plano' ? '#fff' : '#7a7186',
-            '&:hover': { backgroundColor: view === 'plano' ? '#634879' : '#f0eef3' },
-          }}
-        >
-          Plano
-        </Button>
-        <Button
-          onClick={() => setView('agenda')}
-          sx={{
-            flex: 1, borderRadius: 3, textTransform: 'none', fontWeight: 700,
-            backgroundColor: view === 'agenda' ? '#634879' : '#fff',
-            color: view === 'agenda' ? '#fff' : '#7a7186',
-            '&:hover': { backgroundColor: view === 'agenda' ? '#634879' : '#f0eef3' },
-          }}
-        >
-          Agenda
-        </Button>
-      </Box>
+  const toggleDone = async (item) => {
+    try {
+      await setConductDone(item.id, !item.done)
+      if (!item.done) {
+        toast('Marcado como feito', { action: { label: 'Desfazer', onClick: () => setConductDone(item.id, false) } })
+      }
+    } catch {
+      toast('Não foi possível atualizar. Tente novamente.')
+    }
+  }
 
-      {error && (
-        <Typography variant="body2" sx={{ color: '#d64545', mb: 2 }}>
-          {error}
-        </Typography>
+  const loading = !conducts || !exams
+  const items = loading ? [] : [
+    ...conducts.map((c) => ({
+      ...c,
+      kind: 'conduct',
+      done: c.status === 'done',
+      period: c.timeframe,
+      tag: CONDUCT_TAGS[c.type] || 'Plano',
+      meta: [formatRelativeDate(c.dueDate), c.doctorName].filter(Boolean).join(' · '),
+    })),
+    ...exams
+      .filter((e) => e.kind !== 'result' && e.status !== 'realizado')
+      .map((e) => ({
+        ...e,
+        kind: 'exam',
+        done: false,
+        period: periodForDate(e.scheduledDate),
+        tag: 'Exame',
+        meta: [`Fazer ${formatRelativeDate(e.scheduledDate).toLowerCase()}`, e.priority === 'prioritario' ? 'prioritário' : null, e.doctorName].filter(Boolean).join(' · '),
+      })),
+  ]
+  const results = loading ? [] : exams.filter((e) => e.kind === 'result').sort((a, b) => (b.submittedAt?.getTime() ?? 0) - (a.submittedAt?.getTime() ?? 0))
+
+  const conductItems = items.filter((i) => i.kind === 'conduct')
+  const doneCount = conductItems.filter((i) => i.done).length
+  // Pending first, done last, within each period.
+  const byPeriod = PERIODS.map((p) => ({
+    ...p,
+    items: items.filter((i) => (PERIODS.some((x) => x.key === i.period) ? i.period : 'agora') === p.key).sort((a, b) => a.done - b.done),
+  })).filter((p) => p.items.length > 0)
+
+  return (
+    <Page bottomSpace={22}>
+      <PageHeader
+        title="Seu plano"
+        subtitle={conductItems.length > 0 ? `${doneCount} de ${conductItems.length} ${conductItems.length > 1 ? 'itens feitos' : 'item feito'}` : 'Orientações e exames da sua equipe.'}
+      />
+      {conductItems.length > 0 && (
+        <LinearProgress variant="determinate" value={(doneCount / conductItems.length) * 100} aria-label="Progresso do plano" sx={{ height: 8, borderRadius: 4, backgroundColor: colors.segment }} />
       )}
 
-      {view === 'plano' ? (
-        <>
-          <Box sx={{ display: 'flex', gap: 1, mb: 2, overflowX: 'auto' }}>
-            {PLANO_TABS.map((t) => (
-              <Chip
-                key={t.key}
-                label={t.label}
-                onClick={() => setPlanoTab(t.key)}
-                sx={{
-                  backgroundColor: planoTab === t.key ? '#634879' : '#fff',
-                  color: planoTab === t.key ? '#fff' : '#7a7186',
-                  fontWeight: 600,
-                  border: planoTab === t.key ? 'none' : '1px solid #e5e0ea',
-                }}
+      {error && <Typography variant="body2" role="alert" sx={{ color: colors.alert, fontWeight: 600 }}>{error}</Typography>}
+
+      {loading && !error && [0, 1].map((i) => <Skeleton key={i} variant="rounded" height={180} sx={{ borderRadius: '22px' }} />)}
+
+      {!loading && byPeriod.length === 0 && results.length === 0 && (
+        <EmptyState icon={<TaskAltIcon />} title="Seu plano está vazio">
+          Quando seu médico enviar uma receita ou pedir um exame, ele aparece aqui.
+        </EmptyState>
+      )}
+
+      {byPeriod.map((period) => (
+        <Box key={period.key} sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+          <GroupLabel>{period.label}</GroupLabel>
+          <Box sx={{ backgroundColor: colors.surface, borderRadius: '22px', boxShadow: cardShadow, py: 0.5 }}>
+            {period.items.map((item) => (
+              <Item
+                key={item.id}
+                item={item}
+                expanded={expanded === item.id}
+                onToggleExpand={() => setExpanded(expanded === item.id ? null : item.id)}
+                onToggleDone={() => toggleDone(item)}
               />
             ))}
           </Box>
+        </Box>
+      ))}
 
-          {!conducts && !error ? (
-            [0, 1].map((i) => <Skeleton key={i} variant="rounded" sx={{ height: 100, borderRadius: 4, mb: 1.5 }} />)
-          ) : conducts && conducts[planoTab].length === 0 ? (
-            <Typography variant="body2" sx={{ color: '#7a7186' }}>
-              Nada por aqui no momento.
-            </Typography>
-          ) : (
-            conducts &&
-            conducts[planoTab].map((item) => (
-              <Card key={item.id} sx={{ borderRadius: 4, p: 2, mb: 1.5 }}>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <Box sx={{ display: 'flex', gap: 1.2 }}>
-                    {CONDUCT_ICONS[item.type] || <AlarmIcon sx={{ color: '#634879' }} />}
-                    <Box>
-                      <Typography sx={{ fontWeight: 600, color: '#2b2338' }}>{item.title}</Typography>
-                      <Typography variant="body2" sx={{ color: '#7a7186' }}>
-                        {conductRelativeDate(item.dueDate)}
+      {results.length > 0 && (
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+          <GroupLabel>Resultados enviados</GroupLabel>
+          <Box sx={{ backgroundColor: colors.surface, borderRadius: '22px', boxShadow: cardShadow, py: 0.5 }}>
+            {results.map((r) => {
+              const open = expanded === r.id
+              return (
+                <Box key={r.id} sx={{ borderBottom: `1px solid ${colors.line}`, '&:last-of-type': { borderBottom: 'none' } }}>
+                  <ButtonBase onClick={() => setExpanded(open ? null : r.id)} aria-expanded={open} sx={{ width: '100%', display: 'flex', alignItems: 'center', gap: 1.5, px: 1.5, py: 1.25, minHeight: 60, textAlign: 'left', justifyContent: 'space-between' }}>
+                    <Box sx={{ minWidth: 0 }}>
+                      <Typography variant="subtitle1" noWrap>{r.title}</Typography>
+                      <Typography variant="caption" sx={{ color: colors.muted }}>
+                        {[`Enviado ${formatTimeAgo(r.submittedAt)}`, r.reviewStatus === 'reviewed' ? `revisado por ${r.doctorName}` : r.doctorName && `para ${r.doctorName}`].filter(Boolean).join(' · ')}
                       </Typography>
                     </Box>
-                  </Box>
-                  <ChevronRightIcon sx={{ color: '#c9c2d1' }} />
+                    <ProcessingStatusChip status={r.processingStatus} />
+                  </ButtonBase>
+                  <Collapse in={open} unmountOnExit>
+                    <Box sx={{ px: 1.5, pb: 1.75 }}>
+                      {r.attachmentUrl && (
+                        <Button size="small" href={r.attachmentUrl} target="_blank" rel="noopener noreferrer" startIcon={<DescriptionIcon />} sx={{ minHeight: 36, px: 1 }}>Ver arquivo</Button>
+                      )}
+                      <ExtractedDataPanel item={r} />
+                    </Box>
+                  </Collapse>
                 </Box>
-                {item.why && (
-                  <>
-                    <Typography variant="caption" sx={{ color: '#b3aebb', display: 'block', mt: 1 }}>
-                      Por quê?
-                    </Typography>
-                    <Typography variant="body2" sx={{ color: '#7a7186' }}>{item.why}</Typography>
-                  </>
-                )}
-                {(item.attachmentUrl || item.processingStatus) && (
-                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mt: 1 }}>
-                    {item.attachmentUrl ? (
-                      <Button
-                        href={item.attachmentUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        startIcon={<DescriptionOutlinedIcon />}
-                        size="small"
-                        sx={{ color: '#634879', textTransform: 'none', p: 0, minWidth: 0 }}
-                      >
-                        Ver receita{item.doctorName ? ` · ${item.doctorName}` : ''}
-                      </Button>
-                    ) : <span />}
-                    <ProcessingStatusChip status={item.processingStatus} />
-                  </Box>
-                )}
-                <ExtractedDataPanel item={item} />
-              </Card>
-            ))
-          )}
-
-          <Button
-            fullWidth
-            variant="contained"
-            sx={{ backgroundColor: '#634879', borderRadius: 3, py: 1.3, fontWeight: 600, mt: 1, '&:hover': { backgroundColor: '#4f3a63' } }}
-          >
-            Ver plano completo
-          </Button>
-        </>
-      ) : (
-        <>
-          <Typography sx={{ fontWeight: 700, color: '#2b2338', mb: 1.5 }}>
-            Exames e acompanhamento
-          </Typography>
-
-          <Button
-            fullWidth
-            variant="outlined"
-            onClick={onSubmitExam}
-            sx={{
-              borderRadius: 3, py: 1.2, fontWeight: 600, textTransform: 'none', mb: 2,
-              borderColor: '#634879', color: '#634879',
-              '&:hover': { borderColor: '#4f3a63', backgroundColor: '#f0eef3' },
-            }}
-          >
-            Enviar resultado de exame
-          </Button>
-
-          <Box sx={{ display: 'flex', gap: 1, mb: 2, overflowX: 'auto' }}>
-            {AGENDA_TABS.map((t) => (
-              <Chip
-                key={t.key}
-                label={t.label}
-                onClick={() => setAgendaTab(t.key)}
-                sx={{
-                  backgroundColor: agendaTab === t.key ? '#634879' : '#fff',
-                  color: agendaTab === t.key ? '#fff' : '#7a7186',
-                  fontWeight: 600,
-                  border: agendaTab === t.key ? 'none' : '1px solid #e5e0ea',
-                }}
-              />
-            ))}
-          </Box>
-
-          {!exams && !error ? (
-            [0, 1, 2].map((i) => <Skeleton key={i} variant="rounded" sx={{ height: 64, borderRadius: 4, mb: 1.2 }} />)
-          ) : exams && exams[agendaTab].length === 0 ? (
-            <Typography variant="body2" sx={{ color: '#7a7186' }}>
-              Nenhum exame nesta categoria.
-            </Typography>
-          ) : (
-            exams &&
-            exams[agendaTab].map((item) => {
-              const priority = PRIORITY_STYLE[item.priority] || PRIORITY_STYLE.rotina
-              return (
-                <Card key={item.id} sx={{ borderRadius: 4, p: 1.6, mb: 1.2 }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.2 }}>
-                      {EXAM_ICONS[item.icon] || <ScienceIcon sx={{ color: '#634879' }} />}
-                      <Box>
-                        <Typography sx={{ fontWeight: 600, color: '#2b2338' }}>{item.title}</Typography>
-                        <Typography variant="body2" sx={{ color: '#7a7186' }}>
-                          {examRelativeDate(item.scheduledDate)}
-                        </Typography>
-                      </Box>
-                    </Box>
-                    <Chip
-                      label={item.reviewStatus ? REVIEW_STATUS_STYLE[item.reviewStatus].label : priority.label}
-                      size="small"
-                      sx={{
-                        backgroundColor: item.reviewStatus ? REVIEW_STATUS_STYLE[item.reviewStatus].bg : priority.bg,
-                        color: item.reviewStatus ? REVIEW_STATUS_STYLE[item.reviewStatus].color : priority.color,
-                        fontWeight: 600,
-                      }}
-                    />
-                  </Box>
-                  {(item.attachmentUrl || item.processingStatus) && (
-                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mt: 1 }}>
-                      {item.attachmentUrl ? (
-                        <Button
-                          href={item.attachmentUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          startIcon={<DescriptionOutlinedIcon />}
-                          size="small"
-                          sx={{ color: '#634879', textTransform: 'none', p: 0, minWidth: 0 }}
-                        >
-                          {item.reviewStatus ? 'Ver resultado' : 'Ver pedido'}
-                          {!item.reviewStatus && item.doctorName ? ` · ${item.doctorName}` : ''}
-                        </Button>
-                      ) : <span />}
-                      <ProcessingStatusChip status={item.processingStatus} />
-                    </Box>
-                  )}
-                  <ExtractedDataPanel item={item} />
-                </Card>
               )
-            })
-          )}
-
-          <Button
-            fullWidth
-            variant="contained"
-            sx={{ backgroundColor: '#634879', borderRadius: 3, py: 1.3, fontWeight: 600, mt: 1, '&:hover': { backgroundColor: '#4f3a63' } }}
-          >
-            Solicitar novo exame
-          </Button>
-        </>
+            })}
+          </Box>
+        </Box>
       )}
-    </Box>
+    </Page>
   )
 }

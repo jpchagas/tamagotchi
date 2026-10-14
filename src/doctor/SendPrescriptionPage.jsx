@@ -1,283 +1,120 @@
-import { useState, useRef } from 'react'
+import { useState } from 'react'
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
 import Button from '@mui/material/Button'
-import IconButton from '@mui/material/IconButton'
-import Card from '@mui/material/Card'
 import TextField from '@mui/material/TextField'
-import MenuItem from '@mui/material/MenuItem'
-import ToggleButton from '@mui/material/ToggleButton'
-import ToggleButtonGroup from '@mui/material/ToggleButtonGroup'
 import LinearProgress from '@mui/material/LinearProgress'
-import CircularProgress from '@mui/material/CircularProgress'
-import ArrowBackIcon from '@mui/icons-material/ArrowBack'
-import UploadFileIcon from '@mui/icons-material/UploadFile'
-import CheckCircleIcon from '@mui/icons-material/CheckCircle'
-import { uploadConductPrescriptionFile, uploadExamRequestFile } from '../services/storageService'
+import { Page, PageHeader, FieldLabel, ChoiceChips, Segmented, ActionBar } from '../components/ui'
+import FileField from '../components/FileField'
+import { useToast } from '../components/toastContext'
+import { colors } from '../theme'
+import { uploadConductPrescriptionFile } from '../services/storageService'
 import { addConduct, attachConductFile, markConductUploadFailed } from '../services/conductsService'
-import { addExam, attachExamFile, markExamUploadFailed } from '../services/examsService'
 
-const CONDUCT_TIMEFRAMES = [
-  { key: 'agora', label: 'Agora' },
-  { key: 'proximos90', label: 'Próximos 90 dias' },
-  { key: 'esteAno', label: 'Este ano' },
-  { key: 'longoPrazo', label: 'Longo prazo' },
+const TYPES = [
+  { value: 'medication', label: 'Medicação', placeholder: 'Ex: Tomar rosuvastatina 10 mg à noite' },
+  { value: 'diet', label: 'Dieta', placeholder: 'Ex: Reduzir carnes gordurosas' },
+  { value: 'exercise', label: 'Exercício', placeholder: 'Ex: Caminhar 30 min, 5x por semana' },
+  { value: 'followup', label: 'Acompanhamento', placeholder: 'Ex: Retorno com exames' },
 ]
-const CONDUCT_TYPES = [
-  { key: 'medication', label: 'Medicação' },
-  { key: 'diet', label: 'Dieta' },
-  { key: 'exercise', label: 'Exercício' },
-  { key: 'followup', label: 'Acompanhamento' },
-]
-const EXAM_PRIORITIES = [
-  { key: 'prioritario', label: 'Prioritário' },
-  { key: 'rotina', label: 'Rotina' },
+
+// The timeframe also sets the due date the patient sees ("Em 7 dias").
+const TIMEFRAMES = [
+  { value: 'agora', label: 'Agora', days: 7 },
+  { value: 'proximos90', label: '90 dias', days: 90 },
+  { value: 'esteAno', label: 'Este ano', days: 365 },
+  { value: 'longoPrazo', label: 'Contínuo', days: null },
 ]
 
 function daysFromNow(days) {
+  if (days === null) return null
   const d = new Date()
-  d.setDate(d.getDate() + Number(days))
+  d.setDate(d.getDate() + days)
   return d
 }
 
-export default function SendPrescriptionPage({ doctorUid, doctorProfile, patient, onBack }) {
-  const fileInputRef = useRef(null)
-  const [kind, setKind] = useState('conduct') // 'conduct' | 'exam'
+export default function SendPrescriptionPage({ doctorUid, doctorProfile, patient, onBack, onSent }) {
+  const toast = useToast()
   const [file, setFile] = useState(null)
+  const [type, setType] = useState('medication')
   const [title, setTitle] = useState('')
-  const [why, setWhy] = useState('')
   const [timeframe, setTimeframe] = useState('agora')
-  const [conductType, setConductType] = useState('medication')
-  const [priority, setPriority] = useState('prioritario')
-  const [daysUntil, setDaysUntil] = useState('7')
-
-  const [uploadProgress, setUploadProgress] = useState(0)
-  const [status, setStatus] = useState('idle') // idle -> saving -> uploading -> done | error
+  const [why, setWhy] = useState('')
+  const [progress, setProgress] = useState(null)
   const [error, setError] = useState('')
 
-  const handleFileChange = (e) => {
-    const f = e.target.files?.[0]
-    if (f) setFile(f)
-  }
+  const sending = progress !== null
+  const typeInfo = TYPES.find((t) => t.value === type)
+  const firstName = patient.patientName?.split(' ')[0] || 'paciente'
 
-  const handleSubmit = async () => {
-    if (!title || !file) {
-      setError('Preencha o título e anexe o PDF da receita.')
+  const send = async () => {
+    if (!title.trim()) {
+      setError('Dê um título para a paciente ver no plano.')
       return
     }
-
     setError('')
-    setStatus('saving')
-
-    // Created with processingStatus 'pending' BEFORE the upload, so the
-    // client never writes a status after the Cloud Function has started.
-    const commonFields = {
-      title,
-      doctorId: doctorUid,
-      doctorName: doctorProfile?.fullName || '',
-      processingStatus: 'pending',
-    }
-
-    let createdId = null
+    setProgress(0)
+    let conductId = null
     try {
-      if (kind === 'conduct') {
-        createdId = await addConduct(patient.patientId, {
-          ...commonFields,
-          why,
-          timeframe,
-          type: conductType,
-          dueDate: daysFromNow(daysUntil),
-        })
-        setStatus('uploading')
-        const { fileUrl } = await uploadConductPrescriptionFile(patient.patientId, createdId, file, setUploadProgress)
-        await attachConductFile(createdId, { attachmentUrl: fileUrl, attachmentFileName: file.name })
-      } else {
-        createdId = await addExam(patient.patientId, {
-          ...commonFields,
-          status: 'solicitado',
-          priority,
-          icon: 'lab',
-          scheduledDate: daysFromNow(daysUntil),
-        })
-        setStatus('uploading')
-        const { fileUrl } = await uploadExamRequestFile(patient.patientId, createdId, file, setUploadProgress)
-        await attachExamFile(createdId, { attachmentUrl: fileUrl, attachmentFileName: file.name })
+      // Created (with processingStatus 'pending' when there is a file)
+      // BEFORE the upload: the Storage path carries its id.
+      conductId = await addConduct(patient.patientId, {
+        title: title.trim(),
+        why: why.trim(),
+        type,
+        timeframe,
+        dueDate: daysFromNow(TIMEFRAMES.find((t) => t.value === timeframe).days),
+        doctorId: doctorUid,
+        doctorName: doctorProfile?.fullName || '',
+        ...(file && { processingStatus: 'pending' }),
+      })
+      if (file) {
+        const { fileUrl } = await uploadConductPrescriptionFile(patient.patientId, conductId, file, setProgress)
+        await attachConductFile(conductId, { attachmentUrl: fileUrl, attachmentFileName: file.name })
       }
-
-      setStatus('done')
-    } catch (err) {
-      // If the record exists but the file never made it to Storage, the
-      // Cloud Function will never run — mark it failed so it doesn't sit
-      // on "Lendo documento..." forever.
-      if (createdId) {
-        const markFailed = kind === 'conduct' ? markConductUploadFailed : markExamUploadFailed
-        await markFailed(createdId).catch(() => {})
-      }
-      setError('Não foi possível enviar a receita. Tente novamente.')
-      setStatus('error')
+      toast(`Enviado para ${firstName}`)
+      onSent()
+    } catch {
+      if (conductId && file) await markConductUploadFailed(conductId).catch(() => {})
+      setProgress(null)
+      setError('Não foi possível enviar. Tente novamente.')
     }
-  }
-
-  if (status === 'done') {
-    return (
-      <Box sx={{ minHeight: '100vh', backgroundColor: '#f7f5fa', p: 3 }}>
-        <IconButton onClick={onBack} sx={{ mb: 1, ml: -1 }}>
-          <ArrowBackIcon sx={{ color: '#2b2338' }} />
-        </IconButton>
-        <Card sx={{ borderRadius: 4, p: 3, backgroundColor: '#e6f5ea', textAlign: 'center' }}>
-          <CheckCircleIcon sx={{ fontSize: 40, color: '#3ba55c', mb: 1 }} />
-          <Typography sx={{ fontWeight: 700, color: '#2b2338', mb: 0.5 }}>
-            Receita enviada!
-          </Typography>
-          <Typography variant="body2" sx={{ color: '#4a6b52', mb: 2 }}>
-            {patient.patientName} vai ver isso {kind === 'conduct' ? 'no Plano' : 'na Agenda'}. Os dados do documento aparecem assim que a leitura terminar.
-          </Typography>
-          <Button
-            fullWidth
-            variant="contained"
-            onClick={onBack}
-            sx={{ backgroundColor: '#634879', borderRadius: 3, py: 1.2, fontWeight: 600, textTransform: 'none', '&:hover': { backgroundColor: '#4f3a63' } }}
-          >
-            Voltar
-          </Button>
-        </Card>
-      </Box>
-    )
   }
 
   return (
-    <Box sx={{ minHeight: '100vh', backgroundColor: '#f7f5fa', p: 3, pb: 6 }}>
-      <IconButton onClick={onBack} sx={{ mb: 1, ml: -1 }}>
-        <ArrowBackIcon sx={{ color: '#2b2338' }} />
-      </IconButton>
+    <Page bottomSpace={14} sx={{ backgroundColor: colors.surface, gap: 2.5 }}>
+      <PageHeader onBack={onBack} backLabel="Fechar" title="Enviar receita" subtitle={`para ${patient.patientName}`} />
 
-      <Typography sx={{ fontWeight: 700, fontSize: '1.3rem', color: '#2b2338', mb: 0.3 }}>
-        Enviar receita
-      </Typography>
-      <Typography variant="body2" sx={{ color: '#7a7186', mb: 3 }}>
-        Para {patient.patientName}
-      </Typography>
+      <FileField file={file} onChange={setFile} onError={setError} label="Anexar receita" hint="os medicamentos serão lidos do arquivo" disabled={sending} />
 
-      <Typography sx={{ fontWeight: 600, color: '#2b2338', mb: 1 }}>
-        Esta receita é sobre:
-      </Typography>
-      <ToggleButtonGroup
-        fullWidth
-        exclusive
-        value={kind}
-        onChange={(_, value) => value && setKind(value)}
-        sx={{ mb: 3 }}
-      >
-        <ToggleButton value="conduct" sx={toggleSx}>Medicação / Hábito</ToggleButton>
-        <ToggleButton value="exam" sx={toggleSx}>Exame a realizar</ToggleButton>
-      </ToggleButtonGroup>
+      <Box>
+        <FieldLabel>Tipo</FieldLabel>
+        <ChoiceChips label="Tipo" options={TYPES} value={type} onChange={setType} />
+      </Box>
 
-      <TextField
-        fullWidth
-        label="Título"
-        placeholder={kind === 'conduct' ? 'Ex: Tomar losartana diariamente' : 'Ex: Hemograma completo'}
-        value={title}
-        onChange={(e) => setTitle(e.target.value)}
-        margin="normal"
-        sx={fieldSx}
-      />
+      <Box>
+        <FieldLabel htmlFor="rx-title">Título para {firstName}</FieldLabel>
+        <TextField id="rx-title" fullWidth placeholder={typeInfo.placeholder} value={title} onChange={(e) => setTitle(e.target.value)} disabled={sending} />
+      </Box>
 
-      {kind === 'conduct' ? (
-        <>
-          <TextField
-            fullWidth
-            label="Por quê? (motivo/orientação)"
-            placeholder="Ex: Evitar carnes gordurosas e reduzir sódio"
-            value={why}
-            onChange={(e) => setWhy(e.target.value)}
-            margin="normal"
-            multiline
-            minRows={2}
-            sx={fieldSx}
-          />
-          <TextField select fullWidth label="Prazo" value={timeframe} onChange={(e) => setTimeframe(e.target.value)} margin="normal" sx={fieldSx}>
-            {CONDUCT_TIMEFRAMES.map((t) => (
-              <MenuItem key={t.key} value={t.key}>{t.label}</MenuItem>
-            ))}
-          </TextField>
-          <TextField select fullWidth label="Tipo" value={conductType} onChange={(e) => setConductType(e.target.value)} margin="normal" sx={fieldSx}>
-            {CONDUCT_TYPES.map((t) => (
-              <MenuItem key={t.key} value={t.key}>{t.label}</MenuItem>
-            ))}
-          </TextField>
-        </>
-      ) : (
-        <TextField select fullWidth label="Prioridade" value={priority} onChange={(e) => setPriority(e.target.value)} margin="normal" sx={fieldSx}>
-          {EXAM_PRIORITIES.map((p) => (
-            <MenuItem key={p.key} value={p.key}>{p.label}</MenuItem>
-          ))}
-        </TextField>
-      )}
+      <Box>
+        <FieldLabel>Prazo</FieldLabel>
+        <Segmented label="Prazo" options={TIMEFRAMES} value={timeframe} onChange={setTimeframe} />
+      </Box>
 
-      <TextField
-        fullWidth
-        type="number"
-        label={kind === 'conduct' ? 'Prazo (dias a partir de hoje)' : 'Realizar em (dias a partir de hoje)'}
-        value={daysUntil}
-        onChange={(e) => setDaysUntil(e.target.value)}
-        margin="normal"
-        sx={fieldSx}
-      />
+      <Box>
+        <FieldLabel htmlFor="rx-why" hint={`(${firstName} vê isso no plano)`}>Por quê?</FieldLabel>
+        <TextField id="rx-why" fullWidth multiline minRows={3} placeholder="Explique o motivo em linguagem simples" value={why} onChange={(e) => setWhy(e.target.value)} disabled={sending} />
+      </Box>
 
-      <input ref={fileInputRef} type="file" accept="application/pdf" onChange={handleFileChange} style={{ display: 'none' }} />
-      <Card
-        onClick={() => fileInputRef.current?.click()}
-        sx={{
-          borderRadius: 3, p: 2.5, textAlign: 'center', border: '2px dashed #dcbced',
-          cursor: 'pointer', backgroundColor: '#fff', mt: 2,
-        }}
-      >
-        <UploadFileIcon sx={{ fontSize: 32, color: '#634879', mb: 0.5 }} />
-        <Typography sx={{ color: '#2b2338', fontWeight: 600, fontSize: '0.9rem' }}>
-          {file ? file.name : 'Toque para anexar o PDF da receita'}
-        </Typography>
-      </Card>
+      {error && <Typography variant="body2" role="alert" sx={{ color: colors.alert, fontWeight: 600 }}>{error}</Typography>}
 
-      {status === 'uploading' && (
-        <Box sx={{ mt: 2 }}>
-          <Typography variant="caption" sx={{ color: '#7a7186' }}>Enviando arquivo...</Typography>
-          <LinearProgress
-            variant="determinate"
-            value={uploadProgress}
-            sx={{ borderRadius: 2, height: 6, mt: 0.5, backgroundColor: '#f0eef3', '& .MuiLinearProgress-bar': { backgroundColor: '#634879' } }}
-          />
-        </Box>
-      )}
-
-      {error && (
-        <Typography variant="body2" sx={{ color: '#d64545', mt: 2 }}>
-          {error}
-        </Typography>
-      )}
-
-      <Button
-        fullWidth
-        variant="contained"
-        disabled={status === 'uploading' || status === 'saving'}
-        onClick={handleSubmit}
-        sx={{ mt: 3, backgroundColor: '#634879', borderRadius: 3, py: 1.3, fontWeight: 600, textTransform: 'none', '&:hover': { backgroundColor: '#4f3a63' } }}
-      >
-        {status === 'uploading' || status === 'saving' ? (
-          <CircularProgress size={22} sx={{ color: '#fff' }} />
-        ) : (
-          'Enviar receita'
-        )}
-      </Button>
-    </Box>
+      <ActionBar>
+        {sending && file && <LinearProgress variant="determinate" value={progress} sx={{ height: 4, borderRadius: 2, mb: 1.25, backgroundColor: colors.segment }} />}
+        <Button fullWidth size="large" variant="contained" onClick={send} disabled={sending}>
+          {sending ? 'Enviando…' : `Enviar para ${firstName}`}
+        </Button>
+      </ActionBar>
+    </Page>
   )
-}
-
-const fieldSx = {
-  '& .MuiOutlinedInput-root': { borderRadius: 2, backgroundColor: '#fff' },
-}
-
-const toggleSx = {
-  textTransform: 'none',
-  fontWeight: 600,
-  '&.Mui-selected': { backgroundColor: '#634879', color: '#fff', '&:hover': { backgroundColor: '#4f3a63' } },
 }

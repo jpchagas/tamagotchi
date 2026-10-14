@@ -59,7 +59,11 @@ export async function addConduct(patientId, conduct) {
 }
 
 export async function markConductDone(conductId) {
-  await setDoc(doc(db, 'conducts', conductId), { status: 'done' }, { merge: true })
+  await setConductDone(conductId, true)
+}
+
+export async function setConductDone(conductId, done) {
+  await setDoc(doc(db, 'conducts', conductId), { status: done ? 'done' : 'pending' }, { merge: true })
 }
 
 // Called after the PDF upload succeeds. Deliberately does NOT touch

@@ -1,196 +1,251 @@
 import { useState, useEffect } from 'react'
 import Box from '@mui/material/Box'
-import CircularProgress from '@mui/material/CircularProgress'
-import './App.css'
+import Fab from '@mui/material/Fab'
+import AddIcon from '@mui/icons-material/AddRounded'
+import HomeIcon from '@mui/icons-material/HomeRounded'
+import ShowChartIcon from '@mui/icons-material/ShowChartRounded'
+import TaskAltIcon from '@mui/icons-material/TaskAltRounded'
+import GroupIcon from '@mui/icons-material/GroupOutlined'
+import ScienceIcon from '@mui/icons-material/ScienceOutlined'
 import SplashScreen from './components/SplashScreen'
 import LoginPage from './components/LoginPage'
 import ForgotPasswordPage from './components/ForgotPasswordPage'
 import CreateAccountPage from './components/CreateAccountPage'
-import SelectProfilePage from './components/SelectProfilePage'
 import CompleteProfilePage from './components/CompleteProfilePage'
+import { BottomNav } from './components/ui'
 import HealthPage from './pages/HealthPage'
-import TimelinePage from './pages/TimelinePage'
+import EvolutionPage from './pages/EvolutionPage'
 import PlanPage from './pages/PlanPage'
 import TeamPage from './pages/TeamPage'
 import RiskPage from './pages/RiskPage'
-import SubmitExamResultPage from './pages/SubmitExamResultPage'
-import AppBottomNav from './pages/AppBottomNav'
+import UploadExamSheet from './pages/UploadExamSheet'
 import DoctorHomePage from './doctor/DoctorHomePage'
 import ExamesPage from './doctor/ExamesPage'
-import AgendaPage from './doctor/AgendaPage'
 import PatientsListPage from './doctor/PatientsListPage'
-import DoctorBottomNav from './doctor/DoctorBottomNav'
-import logo from './assets/logo.png'
+import PatientDetailPage from './doctor/PatientDetailPage'
+import { APP_MAX_WIDTH } from './theme'
 import { subscribeToAuthChanges, logout } from './services/authService'
 import { getUserProfile } from './services/profileService'
 import { subscribeToIncomingRequestsForPatient, subscribeToIncomingRequestsForDoctor } from './services/careTeamService'
+import { subscribeToDoctorExamReviews } from './services/examReviewService'
+
+const PATIENT_TABS = [
+  { key: 'saude', label: 'Saúde', icon: HomeIcon },
+  { key: 'evolucao', label: 'Evolução', icon: ShowChartIcon },
+  { key: 'plano', label: 'Plano', icon: TaskAltIcon },
+  { key: 'equipe', label: 'Equipe', icon: GroupIcon },
+]
 
 function PatientApp({ profile, uid, onLogout }) {
   const [section, setSection] = useState('saude')
   const [openRisk, setOpenRisk] = useState(null)
-  const [submittingExam, setSubmittingExam] = useState(false)
+  const [evolutionFocus, setEvolutionFocus] = useState(null)
+  const [uploadOpen, setUploadOpen] = useState(false)
+  // Bumped after an upload or a change elsewhere so Saúde reloads.
+  const [refreshKey, setRefreshKey] = useState(0)
   const [pendingRequestsCount, setPendingRequestsCount] = useState(0)
-  const firstName = profile?.fullName?.split(' ')[0] || 'Paciente'
 
   useEffect(() => {
     if (!uid) return
-    const unsubscribe = subscribeToIncomingRequestsForPatient(uid, (requests) => {
-      setPendingRequestsCount(requests.length)
-    })
-    return unsubscribe
+    return subscribeToIncomingRequestsForPatient(uid, (requests) => setPendingRequestsCount(requests.length))
   }, [uid])
+
+  const goTo = (next) => {
+    setSection(next)
+    window.scrollTo(0, 0)
+  }
 
   if (openRisk) {
     return <RiskPage uid={uid} riskType={openRisk} onBack={() => setOpenRisk(null)} />
   }
 
-  if (submittingExam) {
-    return <SubmitExamResultPage uid={uid} profile={profile} onBack={() => setSubmittingExam(false)} />
-  }
+  const showUploadButton = section === 'saude' || section === 'plano'
 
   return (
-    <Box sx={{ minHeight: '100vh', backgroundColor: '#f7f5fa' }}>
+    <Box>
       {section === 'saude' && (
         <HealthPage
-          userName={firstName}
+          key={refreshKey}
           uid={uid}
-          onOpenRisk={setOpenRisk}
+          profile={profile}
           onLogout={onLogout}
           pendingRequestsCount={pendingRequestsCount}
+          onOpenRisk={setOpenRisk}
+          onOpenBiomarker={(key) => { setEvolutionFocus(key); goTo('evolucao') }}
+          onOpenTeam={() => goTo('equipe')}
+          onOpenPlan={() => goTo('plano')}
         />
       )}
-      {section === 'linhaDoTempo' && <TimelinePage uid={uid} />}
-      {section === 'plano' && <PlanPage uid={uid} onSubmitExam={() => setSubmittingExam(true)} />}
+      {section === 'evolucao' && <EvolutionPage uid={uid} initialFocus={evolutionFocus} />}
+      {section === 'plano' && <PlanPage uid={uid} />}
       {section === 'equipe' && <TeamPage uid={uid} profile={profile} />}
-      <AppBottomNav
+
+      {showUploadButton && (
+        <Box sx={{ position: 'fixed', bottom: 'calc(96px + env(safe-area-inset-bottom))', left: 0, right: 0, mx: 'auto', maxWidth: APP_MAX_WIDTH, pointerEvents: 'none', zIndex: 11, display: 'flex', justifyContent: 'flex-end', px: 2.5 }}>
+          <Fab
+            variant="extended"
+            color="primary"
+            onClick={() => setUploadOpen(true)}
+            sx={{ pointerEvents: 'auto', height: 56, px: 2.75, borderRadius: '28px', fontWeight: 700, fontSize: '0.9375rem', boxShadow: '0 10px 24px rgba(99,72,121,0.35)' }}
+          >
+            <AddIcon sx={{ mr: 0.75 }} />
+            Enviar exame
+          </Fab>
+        </Box>
+      )}
+
+      <UploadExamSheet
+        open={uploadOpen}
+        uid={uid}
+        profile={profile}
+        onClose={() => setUploadOpen(false)}
+        onSent={() => setRefreshKey((k) => k + 1)}
+        onOpenTeam={() => { setUploadOpen(false); goTo('equipe') }}
+      />
+
+      <BottomNav
+        items={PATIENT_TABS.map((t) => (t.key === 'equipe' ? { ...t, badge: pendingRequestsCount } : t))}
         value={section}
-        onChange={setSection}
-        badgeCounts={{ equipe: pendingRequestsCount }}
+        onChange={goTo}
       />
     </Box>
   )
 }
 
+const DOCTOR_TABS = [
+  { key: 'inicio', label: 'Início', icon: HomeIcon },
+  { key: 'pacientes', label: 'Pacientes', icon: GroupIcon },
+  { key: 'exames', label: 'Exames', icon: ScienceIcon },
+]
+
 function DoctorApp({ profile, uid, onLogout }) {
-  const [section, setSection] = useState('pacientes')
-  const [pendingRequestsCount, setPendingRequestsCount] = useState(0)
+  const [section, setSection] = useState('inicio')
+  const [patientsFilter, setPatientsFilter] = useState('todos')
+  const [openPatient, setOpenPatient] = useState(null) // { patientId, patientName }
+  const [incomingRequests, setIncomingRequests] = useState([])
+  // One live subscription shared by the dashboard, the Exames tab and its
+  // badge, so a result the Cloud Function finishes reading shows up everywhere.
+  const [reviews, setReviews] = useState(null)
+  const [reviewsError, setReviewsError] = useState(false)
 
   useEffect(() => {
     if (!uid) return
-    const unsubscribe = subscribeToIncomingRequestsForDoctor(uid, (requests) => {
-      setPendingRequestsCount(requests.length)
-    })
-    return unsubscribe
+    return subscribeToIncomingRequestsForDoctor(uid, setIncomingRequests)
   }, [uid])
 
+  useEffect(() => {
+    if (!uid) return
+    return subscribeToDoctorExamReviews(uid, setReviews, () => setReviewsError(true))
+  }, [uid])
+
+  const goTo = (next, filter = 'todos') => {
+    setPatientsFilter(filter)
+    setSection(next)
+    window.scrollTo(0, 0)
+  }
+
+  if (openPatient) {
+    return (
+      <PatientDetailPage
+        doctorUid={uid}
+        doctorProfile={profile}
+        patientUid={openPatient.patientId}
+        patientName={openPatient.patientName}
+        onBack={() => setOpenPatient(null)}
+      />
+    )
+  }
+
+  const pendingReviewCount = (reviews || []).filter((r) => r.reviewStatus === 'not_reviewed').length
+
   return (
-    <Box sx={{ minHeight: '100vh', backgroundColor: '#f7f5fa' }}>
-      {section === 'pacientes' && (
+    <Box>
+      {section === 'inicio' && (
         <DoctorHomePage
-          doctorName={profile?.fullName?.split(' ')[0]}
           uid={uid}
+          profile={profile}
           onLogout={onLogout}
-          onOpenPatients={() => setSection('prontuario')}
-          pendingRequestsCount={pendingRequestsCount}
+          reviews={reviews}
+          incomingRequestsCount={incomingRequests.length}
+          onOpenPatient={setOpenPatient}
+          onOpenExams={() => goTo('exames')}
+          onOpenPatients={(filter) => goTo('pacientes', filter)}
         />
       )}
-      {section === 'exames' && <ExamesPage uid={uid} />}
-      {section === 'prontuario' && <PatientsListPage doctorUid={uid} doctorProfile={profile} />}
-      {section === 'agenda' && <AgendaPage />}
-      <DoctorBottomNav
+      {section === 'pacientes' && (
+        <PatientsListPage
+          doctorUid={uid}
+          doctorProfile={profile}
+          reviews={reviews}
+          initialFilter={patientsFilter}
+          onOpenPatient={setOpenPatient}
+        />
+      )}
+      {section === 'exames' && (
+        <ExamesPage reviews={reviews} error={reviewsError} onOpenPatient={setOpenPatient} />
+      )}
+      <BottomNav
+        items={DOCTOR_TABS.map((t) => {
+          if (t.key === 'pacientes') return { ...t, badge: incomingRequests.length }
+          if (t.key === 'exames') return { ...t, badge: pendingReviewCount }
+          return t
+        })}
         value={section}
-        onChange={setSection}
-        badgeCounts={{ prontuario: pendingRequestsCount }}
+        onChange={goTo}
       />
-    </Box>
-  )
-}
-
-function LoadingScreen() {
-  return (
-    <Box
-      sx={{
-        minHeight: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: '#f7f5fa',
-      }}
-    >
-      <CircularProgress sx={{ color: '#634879' }} />
     </Box>
   )
 }
 
 export default function App() {
-  // splash -> login -> [forgotPassword] -> [createAccount -> selectProfile -> completeProfile] -> app
+  // [splash while auth resolves] -> login -> [forgotPassword] -> [createAccount -> completeProfile] -> app
   const [stage, setStage] = useState('splash')
-  const [splashDone, setSplashDone] = useState(false)
-  const [authChecked, setAuthChecked] = useState(false)
   const [authUser, setAuthUser] = useState(null)
-  const [role, setRole] = useState(null) // 'patient' | 'doctor'
-  const [accountData, setAccountData] = useState({})
   const [profile, setProfile] = useState(null)
+  // Step 1 of sign-up (role, name, e-mail) — kept here because creating the
+  // account fires the auth listener before step 2 renders. Empty for Google
+  // / Apple sign-ins, where step 2 asks for the role.
+  const [signupDraft, setSignupDraft] = useState(null)
 
   const handleLogout = async () => {
     try {
       await logout()
     } finally {
-      // subscribeToAuthChanges will fire with user=null and set stage to
-      // 'login' automatically, but we clear these eagerly so no stale
-      // profile/role data flashes on the next login.
-      setRole(null)
+      // subscribeToAuthChanges sets the stage to 'login'; clear eagerly so
+      // no stale profile flashes on the next login.
       setProfile(null)
-      setAccountData({})
+      setSignupDraft(null)
     }
   }
 
-  // Subscribe once on mount. Firebase fires this immediately with the
-  // current user (or null) on load, then again on every sign-in/out.
+  // Firebase fires this immediately with the current user (or null) on
+  // load, then again on every sign-in/out.
   useEffect(() => {
-    const unsubscribe = subscribeToAuthChanges(async (user) => {
+    return subscribeToAuthChanges(async (user) => {
       setAuthUser(user)
-
-      if (user) {
-        const existingProfile = await getUserProfile(user.uid)
-        if (existingProfile) {
-          setProfile(existingProfile)
-          setRole(existingProfile.role)
-          setStage('app')
-        } else {
-          // Authenticated (e.g. via Google/Apple) but hasn't finished
-          // filling in role-specific profile info yet.
-          setAccountData({
-            uid: user.uid,
-            fullName: user.displayName || '',
-            email: user.email || '',
-          })
-          setStage('selectProfile')
-        }
-      } else {
+      if (!user) {
         setStage('login')
+        return
       }
-
-      setAuthChecked(true)
+      const existingProfile = await getUserProfile(user.uid)
+      if (existingProfile) {
+        setProfile(existingProfile)
+        setStage('app')
+      } else {
+        // Authenticated but no profile yet (just signed up, or first
+        // Google/Apple login).
+        setStage('completeProfile')
+      }
     })
-
-    return unsubscribe
   }, [])
 
-  // Keep showing the splash animation for its full duration even if auth
-  // resolves faster, but don't leave the user stuck on it if auth is slow.
-  if (!splashDone) {
-    return <SplashScreen logoSrc={logo} onFinish={() => setSplashDone(true)} />
-  }
-
-  if (!authChecked) {
-    return <LoadingScreen />
+  if (stage === 'splash') {
+    return <SplashScreen />
   }
 
   if (stage === 'login') {
     return (
       <LoginPage
-        onLogin={() => {}} // stage transition happens via subscribeToAuthChanges above
         onForgotPassword={() => setStage('forgotPassword')}
         onCreateAccount={() => setStage('createAccount')}
       />
@@ -205,23 +260,7 @@ export default function App() {
     return (
       <CreateAccountPage
         onBack={() => setStage('login')}
-        onGoToLogin={() => setStage('login')}
-        onNext={(data) => {
-          setAccountData(data)
-          setStage('selectProfile')
-        }}
-      />
-    )
-  }
-
-  if (stage === 'selectProfile') {
-    return (
-      <SelectProfilePage
-        onGoToLogin={() => setStage('login')}
-        onSelect={(selectedRole) => {
-          setRole(selectedRole)
-          setStage('completeProfile')
-        }}
+        onDraft={setSignupDraft}
       />
     )
   }
@@ -229,10 +268,13 @@ export default function App() {
   if (stage === 'completeProfile') {
     return (
       <CompleteProfilePage
-        role={role}
-        uid={accountData.uid || authUser?.uid}
-        initialData={accountData}
-        onBack={() => setStage('selectProfile')}
+        uid={authUser?.uid}
+        role={signupDraft?.role}
+        initialData={{
+          fullName: signupDraft?.fullName || authUser?.displayName || '',
+          email: signupDraft?.email || authUser?.email || '',
+        }}
+        onCancel={handleLogout}
         onSubmit={(fullProfile) => {
           setProfile(fullProfile)
           setStage('app')
@@ -241,7 +283,7 @@ export default function App() {
     )
   }
 
-  return role === 'doctor' ? (
+  return profile?.role === 'doctor' ? (
     <DoctorApp profile={profile} uid={authUser?.uid} onLogout={handleLogout} />
   ) : (
     <PatientApp profile={profile} uid={authUser?.uid} onLogout={handleLogout} />

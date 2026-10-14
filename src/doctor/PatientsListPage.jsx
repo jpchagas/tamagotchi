@@ -1,40 +1,29 @@
 import { useState, useEffect } from 'react'
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
-import Avatar from '@mui/material/Avatar'
-import Card from '@mui/material/Card'
 import Button from '@mui/material/Button'
-import IconButton from '@mui/material/IconButton'
-import Skeleton from '@mui/material/Skeleton'
-import Chip from '@mui/material/Chip'
 import TextField from '@mui/material/TextField'
 import InputAdornment from '@mui/material/InputAdornment'
-import Autocomplete from '@mui/material/Autocomplete'
+import Skeleton from '@mui/material/Skeleton'
 import CircularProgress from '@mui/material/CircularProgress'
-import ArrowBackIcon from '@mui/icons-material/ArrowBack'
-import SearchIcon from '@mui/icons-material/Search'
-import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined'
-import ChevronRightIcon from '@mui/icons-material/ChevronRight'
-import SendPrescriptionPage from './SendPrescriptionPage'
-import PatientDetailPage from './PatientDetailPage'
-import {
-  getDoctorPatients,
-  requestPatientDoctorLink,
-  confirmPatientDoctorLink,
-  declinePatientDoctorLink,
-} from '../services/careTeamService'
+import AddIcon from '@mui/icons-material/AddRounded'
+import SearchIcon from '@mui/icons-material/SearchRounded'
+import ChevronRightIcon from '@mui/icons-material/ChevronRightRounded'
+import GroupIcon from '@mui/icons-material/GroupOutlined'
+import { Page, PageHeader, Segmented, GroupLabel, Section, RowButton, PersonAvatar, Pill, BottomSheet, EmptyState } from '../components/ui'
+import { useToast } from '../components/toastContext'
+import { colors, cardShadow } from '../theme'
+import { getDoctorPatients, requestPatientDoctorLink, confirmPatientDoctorLink, declinePatientDoctorLink } from '../services/careTeamService'
 import { listPatients } from '../services/userDirectoryService'
 import { getUserProfile } from '../services/profileService'
-import { getPatientIdsWithPendingReview } from '../services/examReviewService'
+import { getLatestRisksForPatients } from '../services/risksService'
 
-const isConfirmed = (p) => p.status === 'confirmed'
-const isIncomingRequest = (p) => p.status === 'pending' && p.initiatedBy === 'patient'
-const isOutgoingRequest = (p) => p.status === 'pending' && p.initiatedBy === 'doctor'
+const isIncoming = (p) => p.status === 'pending' && p.initiatedBy === 'patient'
+const isOutgoing = (p) => p.status === 'pending' && p.initiatedBy === 'doctor'
 
 const FILTERS = [
-  { key: 'todos', label: 'Todos' },
-  { key: 'acompanhamento', label: 'Em acompanhamento' },
-  { key: 'alertas', label: 'Alertas' },
+  { value: 'todos', label: 'Todos' },
+  { value: 'alertas', label: 'Precisam de atenção' },
 ]
 
 function calculateAge(dateOfBirth) {
@@ -44,321 +33,214 @@ function calculateAge(dateOfBirth) {
   return Math.floor((Date.now() - dob.getTime()) / (1000 * 60 * 60 * 24 * 365.25))
 }
 
-export default function PatientsListPage({ doctorUid, doctorProfile, onBack }) {
+function InvitePatientSheet({ open, onClose, doctorUid, doctorProfile, knownPatientIds, onInvited }) {
+  const toast = useToast()
+  const [patients, setPatients] = useState(null)
+  const [query, setQuery] = useState('')
+  const [busy, setBusy] = useState(null)
+
+  useEffect(() => {
+    if (!open || patients) return
+    listPatients().then(setPatients).catch(() => setPatients([]))
+  }, [open, patients])
+
+  const invite = async (patient) => {
+    setBusy(patient.uid)
+    try {
+      await requestPatientDoctorLink({ patientUid: patient.uid, patientProfile: patient, doctorUid, doctorProfile, initiatedBy: 'doctor' })
+      toast(`Convite enviado para ${patient.fullName}`)
+      onInvited()
+      setQuery('')
+      onClose()
+    } catch {
+      toast('Não foi possível enviar o convite. Tente novamente.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const q = query.trim().toLowerCase()
+  const results = (patients || [])
+    .filter((p) => !knownPatientIds.has(p.uid))
+    .filter((p) => !q || p.fullName?.toLowerCase().includes(q) || p.email?.toLowerCase().includes(q))
+
+  return (
+    <BottomSheet open={open} onClose={onClose} title="Adicionar paciente" subtitle="O paciente confirma o convite no app.">
+      <TextField
+        fullWidth
+        autoFocus
+        placeholder="Buscar por nome ou e-mail"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        slotProps={{
+          htmlInput: { 'aria-label': 'Buscar paciente' },
+          input: { startAdornment: <InputAdornment position="start"><SearchIcon sx={{ color: colors.muted }} /></InputAdornment> },
+        }}
+      />
+      <Box sx={{ maxHeight: '45dvh', overflowY: 'auto', mx: -1, mt: 1.5 }}>
+        {!patients && [0, 1, 2].map((i) => <Skeleton key={i} height={56} sx={{ mx: 1 }} />)}
+        {patients && results.length === 0 && <Typography variant="body2" sx={{ color: colors.muted, px: 1, py: 2 }}>Nenhum paciente encontrado.</Typography>}
+        {results.map((p) => (
+          <RowButton key={p.uid} onClick={busy ? undefined : () => invite(p)}>
+            <PersonAvatar name={p.fullName} size={40} />
+            <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+              <Typography variant="subtitle1" noWrap>{p.fullName}</Typography>
+              {p.email && <Typography variant="caption" sx={{ color: colors.muted }} noWrap component="div">{p.email}</Typography>}
+            </Box>
+            {busy === p.uid ? <CircularProgress size={20} /> : <Pill tone="brand">Convidar</Pill>}
+          </RowButton>
+        ))}
+      </Box>
+    </BottomSheet>
+  )
+}
+
+export default function PatientsListPage({ doctorUid, doctorProfile, reviews, initialFilter = 'todos', onOpenPatient }) {
+  const toast = useToast()
   const [patients, setPatients] = useState(null)
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
-  const [filter, setFilter] = useState('todos')
-
-  const [patientOptions, setPatientOptions] = useState([])
-  const [selectedPatient, setSelectedPatient] = useState(null)
-  const [linking, setLinking] = useState(false)
+  const [filter, setFilter] = useState(initialFilter)
+  const [inviting, setInviting] = useState(false)
   const [respondingTo, setRespondingTo] = useState(null)
-  const [sendingPrescriptionTo, setSendingPrescriptionTo] = useState(null)
-  const [viewingDetailFor, setViewingDetailFor] = useState(null)
+  const [reloadKey, setReloadKey] = useState(0)
 
-  const loadPatients = () => {
+  useEffect(() => {
     if (!doctorUid) return
-    Promise.all([getDoctorPatients(doctorUid), getPatientIdsWithPendingReview(doctorUid)])
-      .then(async ([list, pendingReviewIds]) => {
-        // Enrich with age from each patient's profile — one extra read per
-        // patient, acceptable at this scale; worth a denormalized field on
-        // the careLinks doc if the roster grows much larger.
-        const enriched = await Promise.all(
-          list.map(async (p) => {
-            if (!isConfirmed(p)) return p
-            const profile = await getUserProfile(p.patientId).catch(() => null)
-            return { ...p, age: calculateAge(profile?.dateOfBirth), hasPendingReview: pendingReviewIds.has(p.patientId) }
-          })
-        )
-        setPatients(enriched)
+    let cancelled = false
+    getDoctorPatients(doctorUid)
+      .then(async (list) => {
+        const confirmedIds = list.filter((p) => p.status === 'confirmed').map((p) => p.patientId)
+        const [risks, profiles] = await Promise.all([
+          getLatestRisksForPatients(confirmedIds),
+          // One profile read per patient for the age — fine at this scale;
+          // worth a denormalized field on careLinks if rosters grow large.
+          Promise.all(confirmedIds.map((id) => getUserProfile(id).catch(() => null))),
+        ])
+        const highRisk = new Set(risks.filter((r) => r.category === 'alto').map((r) => r.patientId))
+        const ages = Object.fromEntries(confirmedIds.map((id, i) => [id, calculateAge(profiles[i]?.dateOfBirth)]))
+        if (!cancelled) setPatients(list.map((p) => ({ ...p, age: ages[p.patientId], highRisk: highRisk.has(p.patientId) })))
       })
-      .catch(() => setError('Não foi possível carregar seus pacientes.'))
-  }
-
-  useEffect(() => {
-    if (!doctorUid) {
-      setError('Usuário não identificado.')
-      return
+      .catch(() => !cancelled && setError('Não foi possível carregar seus pacientes.'))
+    return () => {
+      cancelled = true
     }
-    loadPatients()
-  }, [doctorUid])
+  }, [doctorUid, reloadKey])
 
-  useEffect(() => {
-    listPatients()
-      .then(setPatientOptions)
-      .catch(() => {})
-  }, [])
-
-  const handleAddPatient = async () => {
-    if (!selectedPatient || !doctorUid || !doctorProfile) return
-    setLinking(true)
+  const respond = async (link, accept) => {
+    setRespondingTo(link.patientId)
     try {
-      await requestPatientDoctorLink({
-        patientUid: selectedPatient.uid,
-        patientProfile: selectedPatient,
-        doctorUid,
-        doctorProfile,
-        initiatedBy: 'doctor',
-      })
-      setSelectedPatient(null)
-      loadPatients()
+      if (accept) await confirmPatientDoctorLink(link.patientId, doctorUid)
+      else await declinePatientDoctorLink(link.patientId, doctorUid)
+      toast(accept ? `${link.patientName} agora é seu paciente` : 'Pedido recusado')
+      setReloadKey((k) => k + 1)
     } catch {
-      setError('Não foi possível enviar o convite. Tente novamente.')
-    } finally {
-      setLinking(false)
-    }
-  }
-
-  const handleRespond = async (patientUid, accept) => {
-    setRespondingTo(patientUid)
-    try {
-      if (accept) await confirmPatientDoctorLink(patientUid, doctorUid)
-      else await declinePatientDoctorLink(patientUid, doctorUid)
-      loadPatients()
-    } catch {
-      setError('Não foi possível processar sua resposta. Tente novamente.')
+      toast('Não foi possível responder. Tente novamente.')
     } finally {
       setRespondingTo(null)
     }
   }
 
-  const all = patients || []
-  const incomingRequests = all.filter(isIncomingRequest)
-  const outgoingRequests = all.filter(isOutgoingRequest)
-
-  let visiblePatients = all.filter(isConfirmed)
-  if (filter === 'acompanhamento') visiblePatients = visiblePatients.filter((p) => !p.hasPendingReview)
-  if (filter === 'alertas') visiblePatients = visiblePatients.filter((p) => p.hasPendingReview)
-  if (search.trim()) {
-    const q = search.trim().toLowerCase()
-    visiblePatients = visiblePatients.filter((p) => p.patientName?.toLowerCase().includes(q))
-  }
-
-  const alreadyKnownUids = new Set(all.map((p) => p.patientId))
-  const availablePatients = patientOptions.filter((p) => !alreadyKnownUids.has(p.uid))
-
-  if (sendingPrescriptionTo) {
-    return (
-      <SendPrescriptionPage
-        doctorUid={doctorUid}
-        doctorProfile={doctorProfile}
-        patient={sendingPrescriptionTo}
-        onBack={() => setSendingPrescriptionTo(null)}
-      />
-    )
-  }
-
-  if (viewingDetailFor) {
-    return (
-      <PatientDetailPage
-        patientUid={viewingDetailFor.patientId}
-        patientName={viewingDetailFor.patientName}
-        onBack={() => setViewingDetailFor(null)}
-      />
-    )
-  }
+  const pendingReview = new Set((reviews || []).filter((r) => r.reviewStatus === 'not_reviewed').map((r) => r.patientId))
+  const all = (patients || []).map((p) => ({ ...p, pendingReview: pendingReview.has(p.patientId) }))
+  const incoming = all.filter(isIncoming)
+  const outgoing = all.filter(isOutgoing)
+  const q = search.trim().toLowerCase()
+  const visible = all
+    .filter((p) => p.status === 'confirmed')
+    .filter((p) => filter !== 'alertas' || p.pendingReview || p.highRisk)
+    .filter((p) => !q || p.patientName?.toLowerCase().includes(q))
 
   return (
-    <Box sx={{ p: 2, pb: 6, backgroundColor: '#f7f5fa', minHeight: '100vh' }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-        {onBack && (
-          <IconButton onClick={onBack} sx={{ mr: 0.5 }}>
-            <ArrowBackIcon sx={{ color: '#2b2338' }} />
-          </IconButton>
-        )}
-        <Typography sx={{ fontWeight: 700, color: '#2b2338' }}>Pacientes</Typography>
-      </Box>
+    <Page>
+      <PageHeader
+        title="Pacientes"
+        actions={<Button variant="contained" startIcon={<AddIcon />} onClick={() => setInviting(true)} sx={{ borderRadius: 999 }}>Adicionar</Button>}
+      />
 
       <TextField
         fullWidth
-        placeholder="Buscar paciente..."
+        placeholder="Buscar paciente"
         value={search}
         onChange={(e) => setSearch(e.target.value)}
-        size="small"
-        sx={{ mb: 1.5, '& .MuiOutlinedInput-root': { borderRadius: 3, backgroundColor: '#fff' } }}
-        InputProps={{
-          startAdornment: (
-            <InputAdornment position="start">
-              <SearchIcon sx={{ color: '#b3aebb', fontSize: 20 }} />
-            </InputAdornment>
-          ),
+        slotProps={{
+          htmlInput: { 'aria-label': 'Buscar paciente' },
+          input: { startAdornment: <InputAdornment position="start"><SearchIcon sx={{ color: colors.muted }} /></InputAdornment> },
         }}
       />
+      <Segmented label="Filtro" options={FILTERS} value={filter} onChange={setFilter} />
 
-      <Box sx={{ display: 'flex', gap: 1, mb: 2, overflowX: 'auto' }}>
-        {FILTERS.map((f) => (
-          <Chip
-            key={f.key}
-            label={f.label}
-            onClick={() => setFilter(f.key)}
-            sx={{
-              backgroundColor: filter === f.key ? '#634879' : '#fff',
-              color: filter === f.key ? '#fff' : '#7a7186',
-              fontWeight: 600,
-              border: filter === f.key ? 'none' : '1px solid #e5e0ea',
-            }}
-          />
-        ))}
-      </Box>
+      {error && <Typography variant="body2" role="alert" sx={{ color: colors.alert, fontWeight: 600 }}>{error}</Typography>}
+      {!patients && !error && [0, 1, 2].map((i) => <Skeleton key={i} variant="rounded" height={64} sx={{ borderRadius: '18px' }} />)}
 
-      {/* Incoming requests: a patient added this doctor and is waiting for confirmation */}
-      {incomingRequests.length > 0 && (
-        <Card sx={{ borderRadius: 4, p: 2, mb: 2, backgroundColor: '#ece5f5' }}>
-          <Typography sx={{ fontWeight: 700, color: '#2b2338', mb: 1 }}>
-            Solicitações pendentes
-          </Typography>
-          {incomingRequests.map((req) => (
-            <Box key={req.id} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', py: 1 }}>
-              <Box>
-                <Typography sx={{ fontWeight: 600, color: '#2b2338' }}>{req.patientName}</Typography>
-                <Typography variant="body2" sx={{ color: '#7a7186' }}>
-                  quer adicionar você à equipe de cuidado
-                </Typography>
-              </Box>
-              <Box sx={{ display: 'flex', gap: 1 }}>
-                {respondingTo === req.patientId ? (
-                  <CircularProgress size={20} sx={{ color: '#634879' }} />
-                ) : (
-                  <>
-                    <Button size="small" onClick={() => handleRespond(req.patientId, false)} sx={{ color: '#7a7186', textTransform: 'none' }}>
-                      Recusar
-                    </Button>
-                    <Button
-                      size="small"
-                      variant="contained"
-                      onClick={() => handleRespond(req.patientId, true)}
-                      sx={{ backgroundColor: '#634879', textTransform: 'none', '&:hover': { backgroundColor: '#4f3a63' } }}
-                    >
-                      Aceitar
-                    </Button>
-                  </>
-                )}
-              </Box>
+      {incoming.map((link) => (
+        <Box key={link.id} sx={{ backgroundColor: colors.surface, borderRadius: '22px', p: 2, border: `2px solid ${colors.brandTint}`, boxShadow: cardShadow, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+            <PersonAvatar name={link.patientName} />
+            <Box>
+              <Typography variant="subtitle1">{link.patientName}</Typography>
+              <Typography variant="body2" sx={{ color: colors.muted }}>Quer você na equipe de cuidado</Typography>
             </Box>
-          ))}
-        </Card>
+          </Box>
+          <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 1.25 }}>
+            <Button variant="outlined" disabled={respondingTo === link.patientId} onClick={() => respond(link, false)}>Recusar</Button>
+            <Button variant="contained" disabled={respondingTo === link.patientId} onClick={() => respond(link, true)}>Aceitar</Button>
+          </Box>
+        </Box>
+      ))}
+
+      {patients && visible.length === 0 && incoming.length === 0 && (
+        <EmptyState icon={<GroupIcon />} title={q || filter !== 'todos' ? 'Ninguém por aqui' : 'Nenhum paciente ainda'}>
+          {q || filter !== 'todos' ? 'Nenhum paciente corresponde ao filtro.' : 'Convide seus pacientes pelo botão Adicionar.'}
+        </EmptyState>
       )}
 
-      {/* Add patient */}
-      <Card sx={{ borderRadius: 4, p: 2, mb: 2 }}>
-        <Typography sx={{ fontWeight: 700, color: '#2b2338', mb: 1 }}>
-          Adicionar paciente
-        </Typography>
-        <Autocomplete
-          fullWidth
-          size="small"
-          options={availablePatients}
-          value={selectedPatient}
-          onChange={(_, value) => setSelectedPatient(value)}
-          getOptionLabel={(p) => p.fullName || ''}
-          isOptionEqualToValue={(a, b) => a.uid === b.uid}
-          renderOption={(props, option) => (
-            <li {...props} key={option.uid}>
-              <Box>
-                <Typography sx={{ fontSize: '0.9rem' }}>{option.fullName}</Typography>
-                {option.email && (
-                  <Typography variant="caption" sx={{ color: '#7a7186' }}>{option.email}</Typography>
-                )}
-              </Box>
-            </li>
-          )}
-          renderInput={(params) => (
-            <TextField {...params} placeholder="Buscar novo paciente pelo nome..." sx={fieldSx} />
-          )}
-          noOptionsText="Nenhum paciente encontrado"
-        />
-        {selectedPatient && (
-          <Button
-            fullWidth
-            variant="contained"
-            disabled={linking}
-            onClick={handleAddPatient}
-            sx={{
-              mt: 1.5, backgroundColor: '#634879', borderRadius: 3, py: 1, fontWeight: 600,
-              textTransform: 'none', '&:hover': { backgroundColor: '#4f3a63' },
-            }}
-          >
-            {linking ? <CircularProgress size={20} sx={{ color: '#fff' }} /> : `Enviar convite para ${selectedPatient.fullName}`}
-          </Button>
-        )}
-      </Card>
-
-      {error && (
-        <Typography variant="body2" sx={{ color: '#d64545', mb: 2 }}>
-          {error}
-        </Typography>
+      {visible.length > 0 && (
+        <Section padded={false}>
+          {visible.map((p) => {
+            const attention = p.pendingReview || p.highRisk
+            return (
+              <RowButton key={p.id} onClick={() => onOpenPatient({ patientId: p.patientId, patientName: p.patientName })}>
+                <Box sx={{ position: 'relative' }}>
+                  <PersonAvatar name={p.patientName} />
+                  <Box sx={{ position: 'absolute', bottom: 0, right: 0, width: 12, height: 12, borderRadius: '50%', border: `2px solid ${colors.surface}`, backgroundColor: attention ? colors.alert : colors.good }} />
+                </Box>
+                <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                  <Typography variant="subtitle1" noWrap>{p.patientName}</Typography>
+                  <Typography variant="body2" sx={{ color: colors.muted }} noWrap>
+                    {[p.age ? `${p.age} anos` : null, p.pendingReview ? 'Exame para revisar' : p.highRisk ? 'Risco alto' : 'Em acompanhamento'].filter(Boolean).join(' · ')}
+                  </Typography>
+                </Box>
+                <ChevronRightIcon sx={{ color: colors.muted }} />
+              </RowButton>
+            )
+          })}
+        </Section>
       )}
 
-      {!patients && !error && (
+      {outgoing.length > 0 && (
         <>
-          {[0, 1, 2].map((i) => (
-            <Skeleton key={i} variant="rounded" sx={{ height: 64, borderRadius: 4, mb: 1.2 }} />
-          ))}
+          <GroupLabel>Convites enviados</GroupLabel>
+          <Section padded={false}>
+            {outgoing.map((p) => (
+              <RowButton key={p.id}>
+                <PersonAvatar name={p.patientName} sx={{ backgroundColor: colors.ground, color: colors.muted, border: `2px dashed ${colors.lineStrong}` }} />
+                <Typography variant="subtitle1" sx={{ flexGrow: 1 }} noWrap>{p.patientName}</Typography>
+                <Pill>Aguardando</Pill>
+              </RowButton>
+            ))}
+          </Section>
         </>
       )}
 
-      {patients && visiblePatients.length === 0 && incomingRequests.length === 0 && !error && (
-        <Typography variant="body2" sx={{ color: '#7a7186' }}>
-          {search || filter !== 'todos' ? 'Nenhum paciente corresponde ao filtro.' : 'Nenhum paciente adicionado ainda.'}
-        </Typography>
-      )}
-
-      {visiblePatients.map((p) => (
-        <Card
-          key={p.id}
-          sx={{ borderRadius: 4, p: 1.6, mb: 1.2, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
-        >
-          <Box
-            onClick={() => setViewingDetailFor(p)}
-            sx={{ display: 'flex', alignItems: 'center', gap: 1.2, flex: 1, cursor: 'pointer' }}
-          >
-            <Box sx={{ position: 'relative' }}>
-              <Avatar sx={{ width: 44, height: 44 }}>👤</Avatar>
-              <Box
-                sx={{
-                  position: 'absolute', bottom: 0, right: 0, width: 11, height: 11, borderRadius: '50%',
-                  backgroundColor: p.hasPendingReview ? '#d64545' : '#3ba55c',
-                  border: '2px solid #fff',
-                }}
-              />
-            </Box>
-            <Box>
-              <Typography sx={{ fontWeight: 600, color: '#2b2338' }}>{p.patientName}</Typography>
-              <Typography variant="caption" sx={{ color: '#7a7186' }}>
-                {[p.age ? `${p.age} anos` : null, p.hasPendingReview ? 'Ação necessária' : 'Em acompanhamento']
-                  .filter(Boolean)
-                  .join(' · ')}
-              </Typography>
-            </Box>
-            <ChevronRightIcon sx={{ color: '#c9c2d1', ml: 'auto', mr: 1 }} />
-          </Box>
-          <IconButton onClick={() => setSendingPrescriptionTo(p)} aria-label="Enviar receita" sx={{ color: '#634879' }}>
-            <DescriptionOutlinedIcon />
-          </IconButton>
-        </Card>
-      ))}
-
-      {outgoingRequests.length > 0 && (
-        <Box sx={{ mt: 2 }}>
-          <Typography variant="caption" sx={{ color: '#b3aebb', fontWeight: 700 }}>
-            CONVITES ENVIADOS
-          </Typography>
-          {outgoingRequests.map((req) => (
-            <Card key={req.id} sx={{ borderRadius: 4, p: 1.6, mt: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                <Avatar sx={{ width: 44, height: 44 }}>👤</Avatar>
-                <Typography sx={{ fontWeight: 600, color: '#2b2338' }}>{req.patientName}</Typography>
-              </Box>
-              <Chip label="Aguardando confirmação" size="small" sx={{ backgroundColor: '#f0eef3', color: '#7a7186', fontWeight: 600 }} />
-            </Card>
-          ))}
-        </Box>
-      )}
-    </Box>
+      <InvitePatientSheet
+        open={inviting}
+        onClose={() => setInviting(false)}
+        doctorUid={doctorUid}
+        doctorProfile={doctorProfile}
+        knownPatientIds={new Set(all.map((p) => p.patientId))}
+        onInvited={() => setReloadKey((k) => k + 1)}
+      />
+    </Page>
   )
-}
-
-const fieldSx = {
-  '& .MuiOutlinedInput-root': { borderRadius: 2, backgroundColor: '#fff' },
 }
