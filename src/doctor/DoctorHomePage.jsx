@@ -6,11 +6,13 @@ import Skeleton from '@mui/material/Skeleton'
 import ChevronRightIcon from '@mui/icons-material/ChevronRightRounded'
 import TaskAltIcon from '@mui/icons-material/TaskAltRounded'
 import AccountMenu from '../components/AccountMenu'
+import NotificationBell from '../components/Notifications'
 import ReviewCard from './ReviewCard'
-import { Page, PageHeader, Section, RowButton, RiskIcon, TextAction, EmptyState } from '../components/ui'
+import { Page, PageHeader, Section, RowButton, RiskIcon, TextAction, EmptyState, Pill } from '../components/ui'
 import { colors, cardShadow } from '../theme'
 import { getDoctorPatients } from '../services/careTeamService'
 import { getLatestRisksForPatients, riskTypeLabel } from '../services/risksService'
+import { APPOINTMENT_STATUS, isSameDay } from '../services/appointmentsService'
 
 const REVIEW_PREVIEW_COUNT = 3
 
@@ -37,7 +39,7 @@ function Stat({ value, label, onClick, highlight, tone }) {
   )
 }
 
-export default function DoctorHomePage({ uid, profile, onLogout, reviews, incomingRequestsCount, onOpenPatient, onOpenExams, onOpenPatients }) {
+export default function DoctorHomePage({ uid, profile, onLogout, reviews, appointments, incomingRequestsCount, onNotification, onOpenPatient, onOpenExams, onOpenAgenda, onOpenPatients }) {
   const [highRisks, setHighRisks] = useState(null)
 
   useEffect(() => {
@@ -61,20 +63,45 @@ export default function DoctorHomePage({ uid, profile, onLogout, reviews, incomi
   const pending = (reviews || []).filter((r) => r.reviewStatus === 'not_reviewed')
   const highRiskPatients = new Set((highRisks || []).map((r) => r.patientId)).size
   const show = (n, ready) => (ready ? String(n) : '—')
+  const todaysAppointments = (appointments || []).filter((a) => a.status !== 'cancelled' && a.startsAt && isSameDay(a.startsAt, new Date()))
 
   return (
     <Page>
       <PageHeader
         overline={today()}
         title={`Olá${profile?.fullName ? `, ${greetingName(profile.fullName)}` : ''}`}
-        actions={<AccountMenu profile={profile} onLogout={onLogout} />}
+        actions={
+          <>
+            <NotificationBell uid={uid} onNavigate={onNotification} />
+            <AccountMenu profile={profile} onLogout={onLogout} />
+          </>
+        }
       />
 
-      <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 1.25 }}>
+      <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 1.25 }}>
         <Stat highlight value={show(pending.length, reviews)} label={pending.length === 1 ? 'exame a revisar' : 'exames a revisar'} onClick={onOpenExams} />
+        <Stat value={show(todaysAppointments.length, appointments)} label={todaysAppointments.length === 1 ? 'consulta hoje' : 'consultas hoje'} onClick={onOpenAgenda} />
         <Stat value={show(highRiskPatients, highRisks)} label={highRiskPatients === 1 ? 'paciente com risco alto' : 'pacientes com risco alto'} tone={highRiskPatients ? colors.alert : undefined} onClick={() => onOpenPatients('alertas')} />
         <Stat value={String(incomingRequestsCount)} label={incomingRequestsCount === 1 ? 'pedido de vínculo' : 'pedidos de vínculo'} onClick={() => onOpenPatients('todos')} />
       </Box>
+
+      {todaysAppointments.length > 0 && (
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', px: 0.5 }}>
+            <Typography variant="h6" component="h2">Consultas de hoje</Typography>
+            <TextAction onClick={onOpenAgenda}>Agenda</TextAction>
+          </Box>
+          <Section padded={false}>
+            {todaysAppointments.map((a) => (
+              <RowButton key={a.id} onClick={() => onOpenPatient({ patientId: a.patientId, patientName: a.patientName })}>
+                <Typography sx={{ fontWeight: 800, minWidth: 52 }}>{a.startsAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</Typography>
+                <Typography variant="subtitle1" sx={{ flexGrow: 1, minWidth: 0 }} noWrap>{a.patientName}</Typography>
+                <Pill tone={APPOINTMENT_STATUS[a.status].tone}>{APPOINTMENT_STATUS[a.status].short}</Pill>
+              </RowButton>
+            ))}
+          </Section>
+        </Box>
+      )}
 
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', px: 0.5 }}>

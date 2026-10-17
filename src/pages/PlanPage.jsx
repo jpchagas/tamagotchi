@@ -17,6 +17,8 @@ import { colors, cardShadow } from '../theme'
 import { subscribeToConducts, setConductDone, formatRelativeDate } from '../services/conductsService'
 import { subscribeToExams } from '../services/examsService'
 import { formatTimeAgo } from '../services/dateUtils'
+import { upcomingAppointments } from '../services/appointmentsService'
+import AppointmentCard from './AppointmentCard'
 
 const PERIODS = [
   { key: 'agora', label: 'Agora' },
@@ -93,7 +95,7 @@ function Item({ item, expanded, onToggleExpand, onToggleDone }) {
   )
 }
 
-export default function PlanPage({ uid }) {
+export default function PlanPage({ uid, appointments }) {
   const toast = useToast()
   const [conducts, setConducts] = useState(null)
   const [exams, setExams] = useState(null)
@@ -147,6 +149,7 @@ export default function PlanPage({ uid }) {
   ]
   const results = loading ? [] : exams.filter((e) => e.kind === 'result').sort((a, b) => (b.submittedAt?.getTime() ?? 0) - (a.submittedAt?.getTime() ?? 0))
 
+  const nextAppointments = appointments ? upcomingAppointments(appointments) : []
   const conductItems = items.filter((i) => i.kind === 'conduct')
   const doneCount = conductItems.filter((i) => i.done).length
   // Pending first, done last, within each period.
@@ -169,7 +172,14 @@ export default function PlanPage({ uid }) {
 
       {loading && !error && [0, 1].map((i) => <Skeleton key={i} variant="rounded" height={180} sx={{ borderRadius: '22px' }} />)}
 
-      {!loading && byPeriod.length === 0 && results.length === 0 && (
+      {nextAppointments.length > 0 && (
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+          <GroupLabel>Consultas</GroupLabel>
+          {nextAppointments.map((a) => <AppointmentCard key={a.id} appointment={a} compact />)}
+        </Box>
+      )}
+
+      {!loading && byPeriod.length === 0 && results.length === 0 && nextAppointments.length === 0 && (
         <EmptyState icon={<TaskAltIcon />} title="Seu plano está vazio">
           Quando seu médico enviar uma receita ou pedir um exame, ele aparece aqui.
         </EmptyState>

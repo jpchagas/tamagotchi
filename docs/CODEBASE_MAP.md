@@ -60,8 +60,9 @@ graph TB
 ├── firebase.local.json         # EMULATORS ONLY (auth 9099, functions 5001, firestore 8080, storage 9199, UI 4000)
 ├── .firebaserc                 # project tamagotchi-459a6
 ├── public/                     # icons
-├── functions/                  # Cloud Function (CommonJS, Node 20)
+├── functions/                  # Cloud Functions (CommonJS, Node 22, firebase-admin 14 modular API)
 │   ├── index.js                # processUploadedFile: Storage trigger → Claude → Firestore
+│   ├── notifications.js        # Firestore triggers → notifications/{id}; pushNotification → FCM
 │   ├── .env                    # EXTRACTION_MODEL override
 │   └── scripts/simulate-upload.js  # local end-to-end test against emulators
 └── src/
@@ -93,7 +94,7 @@ graph TB
 
 **PatientApp** tabs (`BottomNav`): `saude` → HealthPage · `evolucao` → EvolutionPage · `plano` → PlanPage · `equipe` → TeamPage (badge = incoming link requests). The "Enviar exame" FAB (on Saúde and Plano) opens `UploadExamSheet`. Sub-screen: `openRisk` → RiskPage. Tapping a change tile on Saúde opens Evolução focused on that biomarker.
 
-**DoctorApp** tabs: `inicio` → DoctorHomePage · `pacientes` → PatientsListPage (badge = incoming link requests) · `exames` → ExamesPage (badge = results to review). `openPatient` → PatientDetailPage (the per-patient hub), which opens SendPrescriptionPage / RequestExamPage. DoctorApp owns the one live `subscribeToDoctorExamReviews` subscription and passes `reviews` down.
+**DoctorApp** tabs: `inicio` → DoctorHomePage · `pacientes` → PatientsListPage (badge = incoming link requests) · `agenda` → AgendaPage (badge = reschedule requests) · `exames` → ExamesPage (badge = results to review). `appointmentForm` → AppointmentFormPage (new or reschedule). DoctorApp also owns the live appointments subscription. `openPatient` → PatientDetailPage (the per-patient hub), which opens SendPrescriptionPage / RequestExamPage. DoctorApp owns the one live `subscribeToDoctorExamReviews` subscription and passes `reviews` down.
 
 ### components/ (shared UI, auth, onboarding)
 
@@ -104,6 +105,8 @@ graph TB
 | `Toast.jsx` / `toastContext.js` | `ToastProvider`; `useToast()(message, { action: { label, onClick } })` (used for "Desfazer") |
 | `AccountMenu.jsx` | Avatar button → menu with who is signed in and "Sair" |
 | `FileField.jsx` / `fileRules.js` | File chip / attach button; `validateFile` (PDF/PNG/JPEG, 14 MB — same limits as the function and storage.rules) |
+| `Notifications.jsx` | `NotificationBell`: unread badge, bottom-sheet notification center (Hoje/Anteriores, mark all read), push opt-in card / iPhone install hint |
+| `Screen.jsx` | Entrance animation: `tab` fade-up, `push` slide-in; off with prefers-reduced-motion. Keep fixed elements (nav, FAB) outside it |
 | `DocumentProcessing.jsx` | `ProcessingStatusChip({status})`, `ExtractedDataPanel({item})`; maps `processingError` codes to messages |
 | `SplashScreen.jsx` | Logo + spinner while auth resolves |
 | `LoginPage.jsx` | E-mail/password (show/hide), Google, Apple. Navigation happens through the auth listener |
@@ -120,6 +123,7 @@ graph TB
 | `PlanPage.jsx` | One list by period (conducts by `timeframe`, exam requests bucketed by date), tap circle = done (undo toast), rows expand to why/attachment/extracted data; "Resultados enviados" | `subscribeToConducts`, `subscribeToExams`, `setConductDone` |
 | `TeamPage.jsx` | Incoming requests (Aceitar/Recusar), doctors, pending invites, other caregivers (call button); "Adicionar" sheet: invite a doctor or add a family/caregiver contact | `getPatientCareLinks`, `getCareContacts`, `addCareContact`, link fns, `listDoctors` |
 | `UploadExamSheet.jsx` | Bottom sheet: photo or file first, doctor pre-selected when there is one, category chips, optional name (defaults from the file name). `saving → uploading` with progress | `getPatientCareLinks`, `createExamResultDraft`, `uploadExamResultFile`, `attachExamFile`, `markExamUploadFailed` |
+| `AppointmentCard.jsx` | Patient's appointment: when/who/where, Confirmar, Pedir remarcação (sheet with a note), "Entrar na chamada" for telemedicine links | `confirmAppointment`, `requestReschedule` |
 | `RiskPage.jsx` | One risk type: current value, inputs used, earlier calculations, model | `getRiskHistory`, `getBiomarkerTypes` |
 
 ### doctor/
@@ -127,6 +131,8 @@ graph TB
 | File | Purpose | Services |
 |------|---------|----------|
 | `DoctorHomePage.jsx` | Tappable stats (to review / high risk / link requests), first results to review, high-risk alerts | `getDoctorPatients`, `getLatestRisksForPatients` (+ `reviews` prop) |
+| `AgendaPage.jsx` | 14-day strip, reschedule requests, day list; detail sheet with Remarcar / Cancelar / Ver paciente | `cancelAppointment` (+ `appointments` prop) |
+| `AppointmentFormPage.jsx` | New appointment (patient picker when not given) or reschedule (shows the patient's note): date, time, duration, mode, address/link, notes | `getDoctorPatients`, `createAppointment`, `rescheduleAppointment` |
 | `ReviewCard.jsx` | A submitted result: patient, status, extracted values, "Arquivo", "Marcar como revisado" (undo toast). Used on the dashboard, Exames and the hub | `setExamReviewed` |
 | `ExamesPage.jsx` | Category switch, results to review, reviewed list (tap → patient) | `groupByReviewStatus`, `filterByCategory` (+ `reviews` prop) |
 | `PatientsListPage.jsx` | Search, "Precisam de atenção" filter (result to review or high risk), incoming requests, invite sheet. N+1 `getUserProfile` for ages, on purpose | `getDoctorPatients`, `getLatestRisksForPatients`, link fns, `listPatients`, `getUserProfile` |
@@ -150,6 +156,9 @@ graph TB
 | `userDirectoryService.js` | `listDoctors`, `listPatients` (query `users` by role, no pagination) | 204 |
 | `dateUtils.js` | `formatRelativeDate` ("Atrasado", "Hoje", "Em X dias/meses/anos") | 133 |
 | `demoData.js` | Plain sample data + `monthsAgoDate`/`daysFromNow`; imported by both seeders | 1300 |
+| `notificationsService.js` | `subscribeToNotifications(uid)` (newest 60, sorted in memory), `markNotificationRead`, `markAllNotificationsRead` |
+| `pushService.js` | `getPushStatus`, `enablePush(uid)` (permission + FCM token → `deviceTokens`), `refreshPushToken`, `unregisterPush` (call before logout), `onForegroundPush` |
+| `appointmentsService.js` | `APPOINTMENT_STATUS` (label/short/tone), `APPOINTMENT_MODES`, `subscribeToPatientAppointments` / `subscribeToDoctorAppointments`, `upcomingAppointments`, `formatAppointmentDate`, `isSameDay`, create/reschedule/cancel (doctor), confirm/requestReschedule (patient) |
 | `seedDemoData.js` | `seedAllDemoData(uid)`: biomarkerTypes, biomarkers, risks (demo values), careContacts, exams, conducts; console-only, not idempotent | 1700 |
 
 ### functions/

@@ -3,8 +3,8 @@
 // workflow (npm run simulate) can be tested together:
 //   - Auth users local-patient / local-doctor (the uids simulate-upload.js uses)
 //   - their users/{uid} profiles and a confirmed careLink between them
-//   - careContacts, biomarkerTypes, biomarkers, risks, exams and conducts
-//     for the patient, from src/services/demoData.js (same data as the
+//   - careContacts, biomarkerTypes, biomarkers, risks, exams, conducts and
+//     appointments for the patient, from src/services/demoData.js (same data as the
 //     browser seeder)
 //
 // Usage (emulators must be running, see `npm run emulators`):
@@ -19,7 +19,9 @@ process.env.FIREBASE_AUTH_EMULATOR_HOST = process.env.FIREBASE_AUTH_EMULATOR_HOS
 
 const path = require('path')
 const { pathToFileURL } = require('url')
-const admin = require('firebase-admin')
+const { initializeApp } = require('firebase-admin/app')
+const { getFirestore, Timestamp } = require('firebase-admin/firestore')
+const { getAuth } = require('firebase-admin/auth')
 
 const PROJECT_ID = 'demo-tamagotchi'
 const PASSWORD = 'local123'
@@ -58,9 +60,8 @@ const DOCTOR = {
   },
 }
 
-admin.initializeApp({ projectId: PROJECT_ID })
-const db = admin.firestore()
-const { Timestamp } = admin.firestore
+initializeApp({ projectId: PROJECT_ID })
+const db = getFirestore()
 
 const toTimestamp = (date) => (date ? Timestamp.fromDate(date) : null)
 
@@ -74,7 +75,7 @@ async function wipeEmulators() {
 }
 
 async function createUser({ uid, profile }) {
-  await admin.auth().createUser({ uid, email: profile.email, password: PASSWORD, displayName: profile.fullName })
+  await getAuth().createUser({ uid, email: profile.email, password: PASSWORD, displayName: profile.fullName })
   await db.doc(`users/${uid}`).set(profile)
 }
 
@@ -165,9 +166,35 @@ async function main() {
     })
   })
 
+  // Appointments: later today (confirmed), tomorrow (awaiting the
+  // patient), next week (patient asked to reschedule).
+  const at = (days, hour, minute = 0) => {
+    const d = new Date()
+    d.setDate(d.getDate() + days)
+    d.setHours(hour, minute, 0, 0)
+    return toTimestamp(d)
+  }
+  const laterToday = new Date().getHours() < 22 ? at(0, new Date().getHours() + 1) : at(0, 23, 30)
+  const appointmentBase = {
+    patientId,
+    patientName: PATIENT.profile.fullName,
+    doctorId,
+    doctorName: DOCTOR.profile.fullName,
+    doctorSpecialty: DOCTOR.profile.specialty,
+    durationMin: 30,
+    rescheduleNote: '',
+    createdAt: now,
+    updatedAt: now,
+  }
+  ;[
+    { startsAt: laterToday, mode: 'presencial', location: 'Av. Paulista, 1000, sala 42', notes: '', status: 'confirmed' },
+    { startsAt: at(1, 9), mode: 'telemedicina', location: 'https://meet.example.com/consulta-local', notes: 'Traga seus exames mais recentes.', status: 'scheduled' },
+    { startsAt: at(7, 14, 30), mode: 'presencial', location: 'Av. Paulista, 1000, sala 42', notes: '', status: 'reschedule_requested', rescheduleNote: 'Prefiro de manhã' },
+  ].forEach((a) => batch.set(db.collection('appointments').doc(), { ...appointmentBase, ...a }))
+
   await batch.commit()
 
-  console.log('Seeded: 2 users, 1 careLink, careContacts, biomarkerTypes, biomarkers, risks, exams, conducts')
+  console.log('Seeded: 2 users, 1 careLink, careContacts, biomarkerTypes, biomarkers, risks, exams, conducts, appointments')
   console.log(`\nLog in (npm run dev:emulators at the repo root) with password ${PASSWORD}:`)
   console.log(`  patient: ${PATIENT.profile.email}`)
   console.log(`  doctor:  ${DOCTOR.profile.email}`)

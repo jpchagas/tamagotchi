@@ -180,5 +180,47 @@ service cloud.firestore {
     match /risks/{riskId} {
       allow read: if canReadPatient(resource.data.patientId);
     }
+
+    // --- Notifications ---
+    // Written only by the Cloud Functions (functions/notifications.js); the
+    // recipient can read them and mark them as read.
+    match /notifications/{notificationId} {
+      allow read: if signedIn() && resource.data.recipientId == me();
+      allow update: if signedIn() && resource.data.recipientId == me()
+        && changed().hasOnly(['read'])
+        && request.resource.data.read is bool;
+    }
+
+    // --- Push tokens (doc id = FCM token) ---
+    // A device can change hands (logout, another login), so whoever is
+    // signed in may claim its token; only the owner may read or remove it.
+    match /deviceTokens/{token} {
+      allow read, delete: if signedIn() && resource.data.userId == me();
+      allow create, update: if signedIn() && request.resource.data.userId == me();
+    }
+
+    // --- Appointments ---
+    // The doctor schedules (and reschedules or cancels) for a linked
+    // patient; the patient can only confirm or ask to reschedule.
+    match /appointments/{appointmentId} {
+      allow read: if signedIn() && (resource.data.patientId == me() || resource.data.doctorId == me());
+
+      allow create: if signedIn()
+        && request.resource.data.doctorId == me()
+        && confirmedLink(request.resource.data.patientId, me())
+        && request.resource.data.status == 'scheduled'
+        && request.resource.data.startsAt is timestamp;
+
+      allow update: if signedIn() && ownersUnchanged() && (
+        (resource.data.doctorId == me()
+          && request.resource.data.status in ['scheduled', 'cancelled']
+          && request.resource.data.startsAt is timestamp)
+        ||
+        (resource.data.patientId == me()
+          && resource.data.status in ['scheduled', 'confirmed', 'reschedule_requested']
+          && request.resource.data.status in ['confirmed', 'reschedule_requested']
+          && changed().hasOnly(['status', 'rescheduleNote', 'respondedAt']))
+      );
+    }
   }
 }

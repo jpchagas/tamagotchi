@@ -7,12 +7,15 @@ import ShowChartIcon from '@mui/icons-material/ShowChartRounded'
 import TaskAltIcon from '@mui/icons-material/TaskAltRounded'
 import GroupIcon from '@mui/icons-material/GroupOutlined'
 import ScienceIcon from '@mui/icons-material/ScienceOutlined'
+import EventIcon from '@mui/icons-material/EventRounded'
 import SplashScreen from './components/SplashScreen'
 import LoginPage from './components/LoginPage'
 import ForgotPasswordPage from './components/ForgotPasswordPage'
 import CreateAccountPage from './components/CreateAccountPage'
 import CompleteProfilePage from './components/CompleteProfilePage'
+import Screen from './components/Screen'
 import { BottomNav } from './components/ui'
+import { useToast } from './components/toastContext'
 import HealthPage from './pages/HealthPage'
 import EvolutionPage from './pages/EvolutionPage'
 import PlanPage from './pages/PlanPage'
@@ -23,11 +26,35 @@ import DoctorHomePage from './doctor/DoctorHomePage'
 import ExamesPage from './doctor/ExamesPage'
 import PatientsListPage from './doctor/PatientsListPage'
 import PatientDetailPage from './doctor/PatientDetailPage'
+import AgendaPage from './doctor/AgendaPage'
+import AppointmentFormPage from './doctor/AppointmentFormPage'
 import { APP_MAX_WIDTH } from './theme'
 import { subscribeToAuthChanges, logout } from './services/authService'
 import { getUserProfile } from './services/profileService'
 import { subscribeToIncomingRequestsForPatient, subscribeToIncomingRequestsForDoctor } from './services/careTeamService'
 import { subscribeToDoctorExamReviews } from './services/examReviewService'
+import { subscribeToPatientAppointments, subscribeToDoctorAppointments } from './services/appointmentsService'
+import { refreshPushToken, onForegroundPush, unregisterPush } from './services/pushService'
+
+// Keeps this device's push token current and shows pushes that arrive
+// while the app is open (the system only shows them in the background).
+function usePush(uid) {
+  const toast = useToast()
+  useEffect(() => {
+    if (!uid) return
+    refreshPushToken(uid)
+    let unsubscribe = () => {}
+    let cancelled = false
+    onForegroundPush((n) => n.title && toast(n.title)).then((fn) => {
+      if (cancelled) fn()
+      else unsubscribe = fn
+    })
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
+  }, [uid, toast])
+}
 
 const PATIENT_TABS = [
   { key: 'saude', label: 'Saúde', icon: HomeIcon },
@@ -44,41 +71,65 @@ function PatientApp({ profile, uid, onLogout }) {
   // Bumped after an upload or a change elsewhere so Saúde reloads.
   const [refreshKey, setRefreshKey] = useState(0)
   const [pendingRequestsCount, setPendingRequestsCount] = useState(0)
+  const [appointments, setAppointments] = useState(null)
+  usePush(uid)
 
   useEffect(() => {
     if (!uid) return
     return subscribeToIncomingRequestsForPatient(uid, (requests) => setPendingRequestsCount(requests.length))
   }, [uid])
 
+  useEffect(() => {
+    if (!uid) return
+    return subscribeToPatientAppointments(uid, setAppointments, () => setAppointments([]))
+  }, [uid])
+
   const goTo = (next) => {
+    setOpenRisk(null)
     setSection(next)
     window.scrollTo(0, 0)
   }
 
+  // Where a tapped notification leads.
+  const openNotification = (n) => {
+    if (n.type === 'result_read') {
+      setEvolutionFocus(null)
+      goTo('evolucao')
+    } else {
+      goTo('plano')
+    }
+  }
+
   if (openRisk) {
-    return <RiskPage uid={uid} riskType={openRisk} onBack={() => setOpenRisk(null)} />
+    return (
+      <Screen key="risk" variant="push">
+        <RiskPage uid={uid} riskType={openRisk} onBack={() => setOpenRisk(null)} />
+      </Screen>
+    )
   }
 
   const showUploadButton = section === 'saude' || section === 'plano'
 
   return (
     <Box>
-      {section === 'saude' && (
-        <HealthPage
-          key={refreshKey}
-          uid={uid}
-          profile={profile}
-          onLogout={onLogout}
-          pendingRequestsCount={pendingRequestsCount}
-          onOpenRisk={setOpenRisk}
-          onOpenBiomarker={(key) => { setEvolutionFocus(key); goTo('evolucao') }}
-          onOpenTeam={() => goTo('equipe')}
-          onOpenPlan={() => goTo('plano')}
-        />
-      )}
-      {section === 'evolucao' && <EvolutionPage uid={uid} initialFocus={evolutionFocus} />}
-      {section === 'plano' && <PlanPage uid={uid} />}
-      {section === 'equipe' && <TeamPage uid={uid} profile={profile} />}
+      <Screen key={section}>
+        {section === 'saude' && (
+          <HealthPage
+            key={refreshKey}
+            uid={uid}
+            profile={profile}
+            onLogout={onLogout}
+            appointments={appointments}
+            onNotification={openNotification}
+            onOpenRisk={setOpenRisk}
+            onOpenBiomarker={(key) => { setEvolutionFocus(key); goTo('evolucao') }}
+            onOpenPlan={() => goTo('plano')}
+          />
+        )}
+        {section === 'evolucao' && <EvolutionPage uid={uid} initialFocus={evolutionFocus} />}
+        {section === 'plano' && <PlanPage uid={uid} appointments={appointments} />}
+        {section === 'equipe' && <TeamPage uid={uid} profile={profile} />}
+      </Screen>
 
       {showUploadButton && (
         <Box sx={{ position: 'fixed', bottom: 'calc(96px + env(safe-area-inset-bottom))', left: 0, right: 0, mx: 'auto', maxWidth: APP_MAX_WIDTH, pointerEvents: 'none', zIndex: 11, display: 'flex', justifyContent: 'flex-end', px: 2.5 }}>
@@ -115,6 +166,7 @@ function PatientApp({ profile, uid, onLogout }) {
 const DOCTOR_TABS = [
   { key: 'inicio', label: 'Início', icon: HomeIcon },
   { key: 'pacientes', label: 'Pacientes', icon: GroupIcon },
+  { key: 'agenda', label: 'Agenda', icon: EventIcon },
   { key: 'exames', label: 'Exames', icon: ScienceIcon },
 ]
 
@@ -122,11 +174,16 @@ function DoctorApp({ profile, uid, onLogout }) {
   const [section, setSection] = useState('inicio')
   const [patientsFilter, setPatientsFilter] = useState('todos')
   const [openPatient, setOpenPatient] = useState(null) // { patientId, patientName }
+  // { patient?, appointment? } — new appointment, or reschedule when appointment is set
+  const [appointmentForm, setAppointmentForm] = useState(null)
   const [incomingRequests, setIncomingRequests] = useState([])
-  // One live subscription shared by the dashboard, the Exames tab and its
-  // badge, so a result the Cloud Function finishes reading shows up everywhere.
+  // Live subscriptions shared by the dashboard, the tabs and their badges,
+  // so a result the Cloud Function finishes reading (or a patient
+  // confirming) shows up everywhere.
   const [reviews, setReviews] = useState(null)
   const [reviewsError, setReviewsError] = useState(false)
+  const [appointments, setAppointments] = useState(null)
+  usePush(uid)
 
   useEffect(() => {
     if (!uid) return
@@ -138,55 +195,100 @@ function DoctorApp({ profile, uid, onLogout }) {
     return subscribeToDoctorExamReviews(uid, setReviews, () => setReviewsError(true))
   }, [uid])
 
+  useEffect(() => {
+    if (!uid) return
+    return subscribeToDoctorAppointments(uid, setAppointments, () => setAppointments([]))
+  }, [uid])
+
   const goTo = (next, filter = 'todos') => {
+    setOpenPatient(null)
     setPatientsFilter(filter)
     setSection(next)
     window.scrollTo(0, 0)
   }
 
+  const openNotification = (n) => {
+    if (n.target?.patientId) setOpenPatient({ patientId: n.target.patientId, patientName: n.actorName })
+  }
+
+  if (appointmentForm) {
+    return (
+      <Screen key="appointment-form" variant="push">
+        <AppointmentFormPage
+          doctorUid={uid}
+          doctorProfile={profile}
+          patient={appointmentForm.patient}
+          appointment={appointmentForm.appointment}
+          onBack={() => setAppointmentForm(null)}
+          onSaved={() => setAppointmentForm(null)}
+        />
+      </Screen>
+    )
+  }
+
   if (openPatient) {
     return (
-      <PatientDetailPage
-        doctorUid={uid}
-        doctorProfile={profile}
-        patientUid={openPatient.patientId}
-        patientName={openPatient.patientName}
-        onBack={() => setOpenPatient(null)}
-      />
+      <Screen key={`patient-${openPatient.patientId}`} variant="push">
+        <PatientDetailPage
+          doctorUid={uid}
+          doctorProfile={profile}
+          patientUid={openPatient.patientId}
+          patientName={openPatient.patientName}
+          appointments={(appointments || []).filter((a) => a.patientId === openPatient.patientId)}
+          onSchedule={(patient) => setAppointmentForm({ patient })}
+          onReschedule={(appointment) => setAppointmentForm({ appointment })}
+          onBack={() => setOpenPatient(null)}
+        />
+      </Screen>
     )
   }
 
   const pendingReviewCount = (reviews || []).filter((r) => r.reviewStatus === 'not_reviewed').length
+  const rescheduleCount = (appointments || []).filter((a) => a.status === 'reschedule_requested').length
 
   return (
     <Box>
-      {section === 'inicio' && (
-        <DoctorHomePage
-          uid={uid}
-          profile={profile}
-          onLogout={onLogout}
-          reviews={reviews}
-          incomingRequestsCount={incomingRequests.length}
-          onOpenPatient={setOpenPatient}
-          onOpenExams={() => goTo('exames')}
-          onOpenPatients={(filter) => goTo('pacientes', filter)}
-        />
-      )}
-      {section === 'pacientes' && (
-        <PatientsListPage
-          doctorUid={uid}
-          doctorProfile={profile}
-          reviews={reviews}
-          initialFilter={patientsFilter}
-          onOpenPatient={setOpenPatient}
-        />
-      )}
-      {section === 'exames' && (
-        <ExamesPage reviews={reviews} error={reviewsError} onOpenPatient={setOpenPatient} />
-      )}
+      <Screen key={section}>
+        {section === 'inicio' && (
+          <DoctorHomePage
+            uid={uid}
+            profile={profile}
+            onLogout={onLogout}
+            reviews={reviews}
+            appointments={appointments}
+            incomingRequestsCount={incomingRequests.length}
+            onNotification={openNotification}
+            onOpenPatient={setOpenPatient}
+            onOpenExams={() => goTo('exames')}
+            onOpenAgenda={() => goTo('agenda')}
+            onOpenPatients={(filter) => goTo('pacientes', filter)}
+          />
+        )}
+        {section === 'pacientes' && (
+          <PatientsListPage
+            doctorUid={uid}
+            doctorProfile={profile}
+            reviews={reviews}
+            initialFilter={patientsFilter}
+            onOpenPatient={setOpenPatient}
+          />
+        )}
+        {section === 'agenda' && (
+          <AgendaPage
+            appointments={appointments}
+            onNew={() => setAppointmentForm({})}
+            onReschedule={(appointment) => setAppointmentForm({ appointment })}
+            onOpenPatient={setOpenPatient}
+          />
+        )}
+        {section === 'exames' && (
+          <ExamesPage reviews={reviews} error={reviewsError} onOpenPatient={setOpenPatient} />
+        )}
+      </Screen>
       <BottomNav
         items={DOCTOR_TABS.map((t) => {
           if (t.key === 'pacientes') return { ...t, badge: incomingRequests.length }
+          if (t.key === 'agenda') return { ...t, badge: rescheduleCount }
           if (t.key === 'exames') return { ...t, badge: pendingReviewCount }
           return t
         })}
@@ -209,6 +311,8 @@ export default function App() {
 
   const handleLogout = async () => {
     try {
+      // While still signed in: the rules only let the owner remove the token.
+      await unregisterPush()
       await logout()
     } finally {
       // subscribeToAuthChanges sets the stage to 'login'; clear eagerly so

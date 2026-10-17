@@ -3,10 +3,7 @@ import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
 import Button from '@mui/material/Button'
 import ButtonBase from '@mui/material/ButtonBase'
-import IconButton from '@mui/material/IconButton'
-import Badge from '@mui/material/Badge'
 import Skeleton from '@mui/material/Skeleton'
-import NotificationsIcon from '@mui/icons-material/NotificationsNoneRounded'
 import WarningIcon from '@mui/icons-material/WarningAmberRounded'
 import ChevronRightIcon from '@mui/icons-material/ChevronRightRounded'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMoreRounded'
@@ -14,6 +11,8 @@ import EventIcon from '@mui/icons-material/EventAvailableRounded'
 import CheckCircleIcon from '@mui/icons-material/CheckCircleOutlineRounded'
 import InsightsIcon from '@mui/icons-material/InsightsRounded'
 import AccountMenu from '../components/AccountMenu'
+import NotificationBell from '../components/Notifications'
+import AppointmentCard from './AppointmentCard'
 import { useToast } from '../components/toastContext'
 import { Page, PageHeader, Section, RowButton, Pill, RiskIcon, Sparkline, EmptyState, TextAction } from '../components/ui'
 import { TONES, changeTone, changeLabel } from '../components/uiHelpers'
@@ -21,6 +20,7 @@ import { colors, cardShadow } from '../theme'
 import { getBiomarkersGrouped, getBiomarkerTypes, computeChange } from '../services/biomarkersService'
 import { getLatestRisks, riskTypeLabel, formatRiskValue, riskTone } from '../services/risksService'
 import { subscribeToConducts, getNextPendingConduct, setConductDone, formatRelativeDate } from '../services/conductsService'
+import { upcomingAppointments } from '../services/appointmentsService'
 
 // "O que mudou": the biomarkers whose latest reading is most recent, among
 // those with at least two readings to compare.
@@ -58,7 +58,7 @@ function today() {
 
 const formatNumber = (v) => String(v).replace('.', ',')
 
-export default function HealthPage({ uid, profile, onLogout, pendingRequestsCount = 0, onOpenRisk, onOpenBiomarker, onOpenTeam, onOpenPlan }) {
+export default function HealthPage({ uid, profile, onLogout, appointments, onNotification, onOpenRisk, onOpenBiomarker, onOpenPlan }) {
   const toast = useToast()
   const [data, setData] = useState(null)
   const [conducts, setConducts] = useState(null)
@@ -89,6 +89,7 @@ export default function HealthPage({ uid, profile, onLogout, pendingRequestsCoun
   const shownRisks = (data?.risks || []).filter((r) => showLowRisks || r.category !== 'baixo')
   const hiddenLowCount = (data?.risks || []).length - shownRisks.length
   const nextConduct = conducts ? getNextPendingConduct(conducts) : null
+  const nextAppointment = appointments ? upcomingAppointments(appointments)[0] : null
 
   const markDone = async (conduct) => {
     try {
@@ -106,11 +107,7 @@ export default function HealthPage({ uid, profile, onLogout, pendingRequestsCoun
         title={`${greeting()}${firstName ? `, ${firstName}` : ''}`}
         actions={
           <>
-            {pendingRequestsCount > 0 && (
-              <IconButton onClick={onOpenTeam} aria-label={`${pendingRequestsCount} pedido(s) de médicos para entrar na sua equipe`} sx={{ width: 44, height: 44, backgroundColor: colors.surface, border: `1px solid ${colors.line}` }}>
-                <Badge variant="dot" color="error"><NotificationsIcon sx={{ color: colors.ink }} /></Badge>
-              </IconButton>
-            )}
+            <NotificationBell uid={uid} onNavigate={onNotification} />
             <AccountMenu profile={profile} onLogout={onLogout} />
           </>
         }
@@ -134,6 +131,8 @@ export default function HealthPage({ uid, profile, onLogout, pendingRequestsCoun
           <ChevronRightIcon sx={{ color: '#6B2A24' }} />
         </ButtonBase>
       )}
+
+      {nextAppointment && <AppointmentCard appointment={nextAppointment} />}
 
       <Section title="Sua saúde hoje" padded={false}>
         {loading && <Box sx={{ px: 1.5, pb: 1.5 }}>{[0, 1, 2].map((i) => <Skeleton key={i} height={52} />)}</Box>}

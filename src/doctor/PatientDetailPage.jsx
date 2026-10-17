@@ -1,26 +1,28 @@
 import { useState, useEffect } from 'react'
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
-import Button from '@mui/material/Button'
+import ButtonBase from '@mui/material/ButtonBase'
 import IconButton from '@mui/material/IconButton'
 import Skeleton from '@mui/material/Skeleton'
 import MedicationIcon from '@mui/icons-material/MedicationOutlined'
 import ScienceIcon from '@mui/icons-material/ScienceOutlined'
 import PhoneIcon from '@mui/icons-material/PhoneOutlined'
+import EventIcon from '@mui/icons-material/EventRounded'
 import DescriptionIcon from '@mui/icons-material/DescriptionOutlined'
 import ReviewCard from './ReviewCard'
 import SendPrescriptionPage from './SendPrescriptionPage'
 import RequestExamPage from './RequestExamPage'
-import { Page, PageHeader, Section, GroupLabel, PersonAvatar, Pill, RiskIcon, Sparkline, TextAction } from '../components/ui'
+import { Page, PageHeader, Section, GroupLabel, PersonAvatar, Pill, RiskIcon, Sparkline, TextAction, RowButton } from '../components/ui'
 import { TONES, changeTone, changeLabel } from '../components/uiHelpers'
 import { ProcessingStatusChip } from '../components/DocumentProcessing'
-import { colors } from '../theme'
+import { colors, cardShadow } from '../theme'
 import { getUserProfile } from '../services/profileService'
 import { subscribeToExams, formatRelativeDate } from '../services/examsService'
 import { subscribeToConducts } from '../services/conductsService'
 import { getBiomarkersGrouped, getBiomarkerTypes, computeChange } from '../services/biomarkersService'
 import { getLatestRisks, riskTypeLabel, formatRiskValue, riskTone } from '../services/risksService'
 import { formatTimeAgo } from '../services/dateUtils'
+import { APPOINTMENT_STATUS, APPOINTMENT_MODES, upcomingAppointments, formatAppointmentDate } from '../services/appointmentsService'
 
 const INDICATOR_PREVIEW_COUNT = 5
 const formatNumber = (v) => String(v).replace('.', ',')
@@ -49,9 +51,21 @@ function ItemRow({ title, meta, trailing, href }) {
   )
 }
 
-// The doctor's hub for one patient: act (prescribe, request, review) and
-// see their state, without going back to a list.
-export default function PatientDetailPage({ doctorUid, doctorProfile, patientUid, patientName, onBack }) {
+function ActionTile({ icon: Icon, label, onClick, primary }) {
+  return (
+    <ButtonBase
+      onClick={onClick}
+      sx={{ flexDirection: 'column', gap: 0.75, py: 1.5, borderRadius: '18px', fontWeight: 700, fontSize: '0.8125rem', backgroundColor: primary ? colors.brand : colors.surface, color: primary ? '#FFFFFF' : colors.ink, boxShadow: primary ? 'none' : cardShadow }}
+    >
+      <Icon sx={{ color: primary ? '#FFFFFF' : colors.brand }} />
+      {label}
+    </ButtonBase>
+  )
+}
+
+// The doctor's hub for one patient: act (prescribe, request, schedule,
+// review) and see their state, without going back to a list.
+export default function PatientDetailPage({ doctorUid, doctorProfile, patientUid, patientName, appointments = [], onSchedule, onReschedule, onBack }) {
   const [mode, setMode] = useState(null) // 'prescription' | 'exam'
   const [profile, setProfile] = useState(null)
   const [exams, setExams] = useState(null)
@@ -111,6 +125,7 @@ export default function PatientDetailPage({ doctorUid, doctorProfile, patientUid
   const pastResults = results.filter((r) => !toReview.includes(r))
   const openRequests = (exams || []).filter((e) => e.kind !== 'result' && e.status !== 'realizado')
   const activeConducts = (conducts || []).filter((c) => c.status !== 'done')
+  const nextAppointments = upcomingAppointments(appointments)
   const shownIndicators = showAllIndicators ? indicators || [] : (indicators || []).slice(0, INDICATOR_PREVIEW_COUNT)
 
   return (
@@ -136,10 +151,28 @@ export default function PatientDetailPage({ doctorUid, doctorProfile, patientUid
         )}
       </Box>
 
-      <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 1.25 }}>
-        <Button size="large" variant="contained" startIcon={<MedicationIcon />} onClick={() => setMode('prescription')}>Enviar receita</Button>
-        <Button size="large" variant="outlined" startIcon={<ScienceIcon />} onClick={() => setMode('exam')} sx={{ backgroundColor: colors.surface }}>Pedir exame</Button>
+      <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 1.25 }}>
+        <ActionTile primary icon={MedicationIcon} label="Receita" onClick={() => setMode('prescription')} />
+        <ActionTile icon={ScienceIcon} label="Pedir exame" onClick={() => setMode('exam')} />
+        <ActionTile icon={EventIcon} label="Agendar" onClick={() => onSchedule(patient)} />
       </Box>
+
+      {nextAppointments.length > 0 && (
+        <Section title="Consultas" padded={false}>
+          {nextAppointments.map((a) => (
+            <RowButton key={a.id} onClick={() => onReschedule(a)}>
+              <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                <Typography variant="subtitle1">{formatAppointmentDate(a.startsAt)}</Typography>
+                <Typography variant="caption" sx={{ color: colors.muted }}>
+                  {APPOINTMENT_MODES[a.mode]?.label}{a.status === 'reschedule_requested' && a.rescheduleNote ? ` · “${a.rescheduleNote}”` : ''}
+                </Typography>
+              </Box>
+              <Pill tone={APPOINTMENT_STATUS[a.status].tone}>{APPOINTMENT_STATUS[a.status].short}</Pill>
+            </RowButton>
+          ))}
+          <Box sx={{ height: 4 }} />
+        </Section>
+      )}
 
       {error && <Typography variant="body2" role="alert" sx={{ color: colors.alert, fontWeight: 600 }}>{error}</Typography>}
 

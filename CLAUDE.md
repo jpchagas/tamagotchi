@@ -4,14 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Despite the name "Tamagotchi", this is a Brazilian patient/doctor health-tracking PWA (UI strings, Firestore field values and Claude prompts are in Portuguese). It is a React 19 + Vite + MUI app hosted on Firebase (Auth, Firestore, Storage, Hosting), plus one Cloud Function that uses the Claude API to extract structured data from uploaded medical documents.
+Despite the name "Tamagotchi", this is a Brazilian patient/doctor health-tracking PWA (UI strings, Firestore field values and Claude prompts are in Portuguese). It is a React 19 + Vite + MUI app hosted on Firebase (Auth, Firestore, Storage, Hosting, Cloud Messaging), plus Cloud Functions: one uses the Claude API to extract structured data from uploaded medical documents, the others turn data changes into notifications and push them.
 
 **Styling:** "soft clinical" look. `src/theme.js` holds the MUI theme (font Plus Jakarta Sans, loaded in `index.html`) and the color tokens (`colors.brand` = `#634879`, ground, ink, status colors) — use the tokens, never new hex values. Shared building blocks live in `src/components/ui.jsx` (Page, PageHeader, Section, RowButton, BottomNav, BottomSheet, Segmented, ChoiceChips, Pill, PersonAvatar, Sparkline, ActionBar…); plain helpers in `uiHelpers.js`. Confirmations go through `useToast()` (`toastContext.js`). MUI is v9: use `slotProps` (`input`, `htmlInput`, `paper`) — `InputProps` / `inputProps` / `PaperProps` no longer exist and are silently dropped. The app is a single phone-width column (max 520px).
 
 ## Codebase Overview
 
-**Stack**: React 19, Vite, MUI, Recharts, vite-plugin-pwa; Firebase Auth/Firestore/Storage/Hosting; one Node 20 Cloud Function using `@anthropic-ai/sdk`.
-**Structure**: `src/App.jsx` (state machine) → `src/components/` (auth/shared), `src/pages/` (patient), `src/doctor/` (doctor), `src/services/` (all data access); `functions/` (extraction pipeline).
+**Stack**: React 19, Vite, MUI 9, Recharts, vite-plugin-pwa; Firebase Auth/Firestore/Storage/Hosting/Cloud Messaging; Cloud Functions on Node 22 (`firebase-functions` 7, `firebase-admin` 14, `@anthropic-ai/sdk`).
+**Structure**: `src/App.jsx` (state machine) → `src/components/` (auth/shared), `src/pages/` (patient), `src/doctor/` (doctor), `src/services/` (all data access); `functions/` (`index.js` extraction pipeline, `notifications.js` notification triggers + push).
 
 For detailed architecture, file-by-file exports, the full data model and known gotchas, see [docs/CODEBASE_MAP.md](docs/CODEBASE_MAP.md).
 
@@ -23,12 +23,13 @@ npm run build      # production build -> dist/ (also generates the PWA service w
 npm run lint       # ESLint over the repo
 npm run preview    # serve the built dist/
 
-# Cloud Function (functions/, CommonJS, Node 20). Install deps separately: cd functions && npm install
+# Cloud Functions (functions/, CommonJS, Node 22). Install deps separately: cd functions && npm install
+# firebase-admin 14+ is modular only: getFirestore()/getStorage()/getAuth(), never admin.firestore()
 firebase deploy --only hosting      # deploys dist/ (build first)
 firebase deploy --only functions    # needs ANTHROPIC_API_KEY secret; optional EXTRACTION_MODEL in functions/.env
 
 # Run processUploadedFile locally (from functions/). Put ANTHROPIC_API_KEY=... in functions/.secret.local (gitignored).
-npm run emulators                                   # Auth + Functions + Firestore + Storage emulators, project demo-tamagotchi, UI on :4000
+npm run emulators                                   # Auth + Functions + Firestore + Storage emulators, project demo-tamagotchi, UI on :4000 (push is logged, not sent)
 npm run seed                                        # resets the emulators; users local-patient/local-doctor (paciente@local.test / medico@local.test, password local123) + demo data
 npm run simulate -- examResult path/to/laudo.pdf    # or prescription | examRequest; creates the pending doc, uploads, prints the result
 
@@ -56,6 +57,9 @@ There is no test suite. The Firebase config is hard-coded in `src/firebase.js`, 
 - `biomarkers`: one measurement per doc, `patientId, biomarkerType, value, unit, recordedAt, source ('exam' | 'manual'), examId`
 - `biomarkerTypes/{key}`: global definitions `{label, unit, goodDirection}`, shared by all patients
 - `risks`: one doc per calculation, `patientId, riskType, value (%), category ('baixo' | 'moderado' | 'alto'), model, horizonYears, inputs, calculatedAt`. Nothing calculates risks yet; only the seed writes them.
+- `appointments`: `patientId, doctorId, startsAt, durationMin, mode ('presencial' | 'telemedicina'), location, notes, status ('scheduled' | 'confirmed' | 'reschedule_requested' | 'cancelled'), rescheduleNote`. The doctor schedules/reschedules/cancels; the patient can only confirm or ask to reschedule.
+- `notifications`: `recipientId, type, title, body, target {kind, id, patientId}, read, createdAt`. Written only by the Firestore triggers in `functions/notifications.js` (exam requested, result submitted/read/failed/reviewed, conduct created) with deterministic ids + `.create()`, so retries and review toggles never notify twice. Clients may only flip `read`.
+- `deviceTokens/{fcmToken}`: `userId`. Every new notification is pushed to the recipient's tokens; dead tokens are deleted. The app removes this device's token on logout (before signing out).
 
 Queries use equality filters only and sort in memory, so no composite indexes are needed. Keep it that way or add a `firestore.indexes.json`. Storage paths still nest under `users/{patientUid}/...`; that is independent of Firestore.
 
@@ -65,5 +69,7 @@ Queries use equality filters only and sort in memory, so no composite indexes ar
 3. `processUploadedFile` (Storage `onObjectFinalized`) matches the path against `ROUTES`, loads `conducts/{id}` or `exams/{id}`, skips it unless the doc's `patientId` matches the uid in the path, sets `processing`, sends the file inline to Claude with a structured-output schema, then merges `medications` / `requestedExams` / `extractedValues` and sets `processingStatus: 'completed' | 'failed'` with a short `processingError` code. For exam results it also writes `biomarkers` (doc ids `{examId}_{i}`, previous ones for the exam deleted first, because trigger delivery can repeat) and creates missing `biomarkerTypes`.
 
 The client must never set `processingStatus` past `pending`, except the `mark*UploadFailed` helpers; only the function advances it. The storage path prefixes and the `ROUTES` regexes must stay in sync. `src/components/DocumentProcessing.jsx` renders status chips and extracted data, and maps the `processingError` codes to messages, for both patient and doctor screens.
+
+**Notifications & push:** `NotificationBell` (`components/Notifications.jsx`) is the notification center on Saúde/Início; tapping one navigates via `onNotification` in `App.jsx`. Push uses FCM with `public/firebase-messaging-sw.js` (own scope, beside the PWA worker; keep its Firebase version in step with the `firebase` package) and needs `VAPID_KEY` in `src/firebase.js` — empty = push hidden; always off in emulator mode. iPhone only gets web push from the installed PWA. The Firestore triggers run in `us-central1` (database `nam5`); `processUploadedFile` stays in `us-east1` with its bucket.
 
 **Demo data:** the sample data lives in `src/services/demoData.js` (plain data, no Firebase imports). `functions/scripts/seed-emulators.js` (`npm run seed`) loads it into the emulators; `src/services/seedDemoData.js` adds it for one user from the browser console (`seedAllDemoData(uid)`).

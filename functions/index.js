@@ -1,14 +1,14 @@
 const { onObjectFinalized } = require('firebase-functions/v2/storage')
 const { defineSecret, defineString } = require('firebase-functions/params')
 const logger = require('firebase-functions/logger')
-const admin = require('firebase-admin')
 const Anthropic = require('@anthropic-ai/sdk')
-// Modular import: the emulator wraps admin.firestore and drops its static
-// FieldValue/Timestamp, so the namespaced form breaks when run locally.
-const { FieldValue, Timestamp } = require('firebase-admin/firestore')
+// firebase-admin 14+ only has the modular API (no admin.firestore()).
+const { initializeApp } = require('firebase-admin/app')
+const { getFirestore, FieldValue, Timestamp } = require('firebase-admin/firestore')
+const { getStorage } = require('firebase-admin/storage')
 
-admin.initializeApp()
-const db = admin.firestore()
+initializeApp()
+const db = getFirestore()
 
 // API key from the Claude Console (platform.claude.com). API usage is billed
 // separately from Claude.ai / Claude Code subscriptions.
@@ -318,7 +318,7 @@ exports.processUploadedFile = onObjectFinalized(
     await update({ processingStatus: 'processing', processingError: FieldValue.delete() })
 
     try {
-      const [fileBuffer] = await admin.storage().bucket(event.data.bucket).file(storagePath).download()
+      const [fileBuffer] = await getStorage().bucket(event.data.bucket).file(storagePath).download()
       const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY.value(), timeout: 150_000, maxRetries: 2 })
       const extracted = await PROCESSORS[route.kind]({ client, fileBuffer, contentType, patientUid, examId: docId })
 
@@ -336,3 +336,6 @@ exports.processUploadedFile = onObjectFinalized(
     }
   }
 )
+
+// Notifications + push (Firestore triggers), see notifications.js.
+Object.assign(exports, require('./notifications'))

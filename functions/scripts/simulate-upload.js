@@ -14,7 +14,9 @@ process.env.FIREBASE_STORAGE_EMULATOR_HOST = process.env.FIREBASE_STORAGE_EMULAT
 
 const fs = require('fs')
 const path = require('path')
-const admin = require('firebase-admin')
+const { initializeApp } = require('firebase-admin/app')
+const { getFirestore, Timestamp } = require('firebase-admin/firestore')
+const { getStorage } = require('firebase-admin/storage')
 
 const PROJECT_ID = 'demo-tamagotchi'
 const BUCKET = `${PROJECT_ID}.appspot.com`
@@ -24,9 +26,8 @@ const TIMEOUT_MS = 10 * 60 * 1000
 
 const CONTENT_TYPES = { '.pdf': 'application/pdf', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg' }
 
-admin.initializeApp({ projectId: PROJECT_ID, storageBucket: BUCKET })
-const db = admin.firestore()
-const { Timestamp } = admin.firestore
+initializeApp({ projectId: PROJECT_ID, storageBucket: BUCKET })
+const db = getFirestore()
 
 // Same doc shapes the client writes (SendPrescriptionPage, SubmitExamResultPage).
 async function createPendingDoc(kind, title) {
@@ -85,7 +86,7 @@ async function main() {
   console.log(`Created ${ref.path} (pending)`)
 
   const destination = storagePath(fileName)
-  await admin.storage().bucket().upload(filePath, { destination, contentType })
+  await getStorage().bucket().upload(filePath, { destination, contentType })
   console.log(`Uploaded gs://${BUCKET}/${destination}`)
   console.log('Waiting for processUploadedFile...')
 

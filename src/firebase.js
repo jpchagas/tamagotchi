@@ -25,7 +25,7 @@ const firebaseConfig = {
 // (`npm run emulators` in functions/). The project id must match the one
 // the emulators run with, or the app and the Cloud Function would see
 // different databases.
-const useEmulators = import.meta.env.VITE_USE_EMULATORS === 'true'
+export const useEmulators = import.meta.env.VITE_USE_EMULATORS === 'true'
 const EMULATOR_PROJECT_ID = 'demo-tamagotchi'
 
 export const firebaseApp = initializeApp(
@@ -42,3 +42,7 @@ if (useEmulators) {
   connectFirestoreEmulator(db, '127.0.0.1', 8080)
   connectStorageEmulator(storage, '127.0.0.1', 9199)
 }
+
+// Web Push public key (Firebase console > Project settings > Cloud Messaging >
+// Web Push certificates). Public by design. Empty = push turned off.
+export const VAPID_KEY = ''

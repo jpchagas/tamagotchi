@@ -1,0 +1,9 @@
+{
+  "enabledPlugins": {
+    "cartographer@cartographer-marketplace": true,
+    "andrej-karpathy-skills@karpathy-skills": true,
+    "claude-code-setup@claude-plugins-official": true,
+    "claude-mem-cowork@thedotmack": true,
+    "headroom@headroom-marketplace": true
+  }
+}
