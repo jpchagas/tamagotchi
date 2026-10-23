@@ -29,3 +29,11 @@ export function formatTimeAgo(date) {
   if (days < 30) return `há ${days} dias`
   return date.toLocaleDateString('pt-BR')
 }
+
+// Whole years from a profile's dateOfBirth; null when missing or invalid.
+export function calculateAge(dateOfBirth) {
+  if (!dateOfBirth) return null
+  const dob = new Date(dateOfBirth)
+  if (isNaN(dob)) return null
+  return Math.floor((Date.now() - dob.getTime()) / (1000 * 60 * 60 * 24 * 365.25))
+}

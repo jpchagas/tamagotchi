@@ -17,6 +17,7 @@ import { getDoctorPatients, requestPatientDoctorLink, confirmPatientDoctorLink, 
 import { listPatients } from '../services/userDirectoryService'
 import { getUserProfile } from '../services/profileService'
 import { getLatestRisksForPatients } from '../services/risksService'
+import { calculateAge } from '../services/dateUtils'
 
 const isIncoming = (p) => p.status === 'pending' && p.initiatedBy === 'patient'
 const isOutgoing = (p) => p.status === 'pending' && p.initiatedBy === 'doctor'
@@ -25,13 +26,6 @@ const FILTERS = [
   { value: 'todos', label: 'Todos' },
   { value: 'alertas', label: 'Precisam de atenção' },
 ]
-
-function calculateAge(dateOfBirth) {
-  if (!dateOfBirth) return null
-  const dob = new Date(dateOfBirth)
-  if (isNaN(dob)) return null
-  return Math.floor((Date.now() - dob.getTime()) / (1000 * 60 * 60 * 24 * 365.25))
-}
 
 function InvitePatientSheet({ open, onClose, doctorUid, doctorProfile, knownPatientIds, onInvited }) {
   const toast = useToast()

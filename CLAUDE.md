@@ -72,4 +72,6 @@ The client must never set `processingStatus` past `pending`, except the `mark*Up
 
 **Notifications & push:** `NotificationBell` (`components/Notifications.jsx`) is the notification center on Saúde/Início; tapping one navigates via `onNotification` in `App.jsx`. Push uses FCM with `public/firebase-messaging-sw.js` (own scope, beside the PWA worker; keep its Firebase version in step with the `firebase` package) and needs `VAPID_KEY` in `src/firebase.js` — empty = push hidden; always off in emulator mode. iPhone only gets web push from the installed PWA. The Firestore triggers run in `us-central1` (database `nam5`); `processUploadedFile` stays in `us-east1` with its bucket.
 
+**Health report (PDF):** `components/HealthReport.jsx` (row + export sheet, on Saúde and the doctor's patient hub) gathers data with `services/reportService.js` and renders it in the browser with `@react-pdf/renderer` (`components/HealthReportPdf.jsx`), both loaded with `import()` on export. The PDF uses the built-in Helvetica, so only Latin-1 text (no ↑/↓). No server side and no new rules.
+
 **Demo data:** the sample data lives in `src/services/demoData.js` (plain data, no Firebase imports). `functions/scripts/seed-emulators.js` (`npm run seed`) loads it into the emulators; `src/services/seedDemoData.js` adds it for one user from the browser console (`seedAllDemoData(uid)`).

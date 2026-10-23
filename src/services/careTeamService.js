@@ -16,7 +16,8 @@ export function careLinkId(patientId, doctorId) {
   return `${patientId}_${doctorId}`
 }
 
-function formatCrm(profile) {
+// "CRM 12345/SP", or "" when the profile has no CRM.
+export function formatCrm(profile) {
   if (!profile.crm) return ''
   return `CRM ${profile.crm}${profile.crmState ? '/' + profile.crmState : ''}`
 }

@@ -108,6 +108,8 @@ graph TB
 | `Notifications.jsx` | `NotificationBell`: unread badge, bottom-sheet notification center (Hoje/Anteriores, mark all read), push opt-in card / iPhone install hint |
 | `Screen.jsx` | Entrance animation: `tab` fade-up, `push` slide-in; off with prefers-reduced-motion. Keep fixed elements (nav, FAB) outside it |
 | `DocumentProcessing.jsx` | `ProcessingStatusChip({status})`, `ExtractedDataPanel({item})`; maps `processingError` codes to messages |
+| `HealthReport.jsx` | `HealthReportRow({patientId, viewerProfile, subtitle})`: card row → sheet with period (3 meses / 12 meses / Tudo) → "Gerar PDF" → "Compartilhar" (Web Share with the file, when supported) / "Baixar". Two taps on purpose: Safari only opens the share sheet straight from a tap. On Saúde (patient) and the patient hub (doctor) |
+| `HealthReportPdf.jsx` | The `@react-pdf/renderer` document (A4): header, risks, biomarkers (change over the period + trend line), active plan with medications, open exam requests, results in the period, footer with page numbers. Loaded with `import()` together with the renderer, so neither is in the main bundle. Built-in Helvetica (WinAnsi): no arrows or other non-Latin-1 symbols. Keep `lineHeight` off `Page` (it hides the fixed footer's page numbers) and give any View that sets it a `fontSize` |
 | `SplashScreen.jsx` | Logo + spinner while auth resolves |
 | `LoginPage.jsx` | E-mail/password (show/hide), Google, Apple. Navigation happens through the auth listener |
 | `CreateAccountPage.jsx` | Step 1: role, name, e-mail, password with strength bar. Also exports `RoleChoice`, `StepProgress` |
@@ -154,7 +156,8 @@ graph TB
 | `risksService.js` | `RISK_TYPES`, `RISK_CATEGORIES`, `riskTypeLabel`, `formatRiskValue`, `getLatestRisks(patientId)`, `getRiskHistory(patientId, riskType)`, `getLatestRisksForPatients(ids)` (one query per patient, for the rules), `addRisk` | 950 |
 | `storageService.js` | `uploadConductPrescriptionFile`, `uploadExamRequestFile`, `uploadExamResultFile` (all `(patientUid, id, file, onProgress)` → `uploadBytesResumable` + `getDownloadURL`) | 378 |
 | `userDirectoryService.js` | `listDoctors`, `listPatients` (query `users` by role, no pagination) | 204 |
-| `dateUtils.js` | `formatRelativeDate` ("Atrasado", "Hoje", "Em X dias/meses/anos") | 133 |
+| `dateUtils.js` | `formatRelativeDate` ("Atrasado", "Hoje", "Em X dias/meses/anos"), `formatTimeAgo`, `calculateAge(dateOfBirth)` | 133 |
+| `reportService.js` | `REPORT_PERIODS`, `getHealthReportData(patientId, { months })`: profile, latest risks, biomarkers measured in the period, active conducts, open exam requests, results in the period. Built on the other services, so a doctor gets exactly what the rules allow | |
 | `demoData.js` | Plain sample data + `monthsAgoDate`/`daysFromNow`; imported by both seeders | 1300 |
 | `notificationsService.js` | `subscribeToNotifications(uid)` (newest 60, sorted in memory), `markNotificationRead`, `markAllNotificationsRead` |
 | `pushService.js` | `getPushStatus`, `enablePush(uid)` (permission + FCM token → `deviceTokens`), `refreshPushToken`, `unregisterPush` (call before logout), `onForegroundPush` |

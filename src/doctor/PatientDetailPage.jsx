@@ -10,6 +10,7 @@ import PhoneIcon from '@mui/icons-material/PhoneOutlined'
 import EventIcon from '@mui/icons-material/EventRounded'
 import DescriptionIcon from '@mui/icons-material/DescriptionOutlined'
 import ReviewCard from './ReviewCard'
+import HealthReportRow from '../components/HealthReport'
 import SendPrescriptionPage from './SendPrescriptionPage'
 import RequestExamPage from './RequestExamPage'
 import { Page, PageHeader, Section, GroupLabel, PersonAvatar, Pill, RiskIcon, Sparkline, TextAction, RowButton } from '../components/ui'
@@ -21,18 +22,11 @@ import { subscribeToExams, formatRelativeDate } from '../services/examsService'
 import { subscribeToConducts } from '../services/conductsService'
 import { getBiomarkersGrouped, getBiomarkerTypes, computeChange } from '../services/biomarkersService'
 import { getLatestRisks, riskTypeLabel, formatRiskValue, riskTone } from '../services/risksService'
-import { formatTimeAgo } from '../services/dateUtils'
+import { formatTimeAgo, calculateAge } from '../services/dateUtils'
 import { APPOINTMENT_STATUS, APPOINTMENT_MODES, upcomingAppointments, formatAppointmentDate } from '../services/appointmentsService'
 
 const INDICATOR_PREVIEW_COUNT = 5
 const formatNumber = (v) => String(v).replace('.', ',')
-
-function calculateAge(dateOfBirth) {
-  if (!dateOfBirth) return null
-  const dob = new Date(dateOfBirth)
-  if (isNaN(dob)) return null
-  return Math.floor((Date.now() - dob.getTime()) / (1000 * 60 * 60 * 24 * 365.25))
-}
 
 function ItemRow({ title, meta, trailing, href }) {
   return (
@@ -249,6 +243,8 @@ export default function PatientDetailPage({ doctorUid, doctorProfile, patientUid
           ))}
         </Section>
       )}
+
+      <HealthReportRow patientId={patientUid} viewerProfile={doctorProfile} subtitle="Riscos, indicadores, plano e exames em PDF" />
     </Page>
   )
 }

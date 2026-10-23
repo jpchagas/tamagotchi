@@ -13,6 +13,7 @@ import InsightsIcon from '@mui/icons-material/InsightsRounded'
 import AccountMenu from '../components/AccountMenu'
 import NotificationBell from '../components/Notifications'
 import AppointmentCard from './AppointmentCard'
+import HealthReportRow from '../components/HealthReport'
 import { useToast } from '../components/toastContext'
 import { Page, PageHeader, Section, RowButton, Pill, RiskIcon, Sparkline, EmptyState, TextAction } from '../components/ui'
 import { TONES, changeTone, changeLabel } from '../components/uiHelpers'
@@ -218,6 +219,8 @@ export default function HealthPage({ uid, profile, onLogout, appointments, onNot
           </Box>
         )}
       </Section>
+
+      <HealthReportRow patientId={uid} viewerProfile={profile} subtitle="PDF para levar à consulta ou enviar à sua equipe" />
     </Page>
   )
 }
