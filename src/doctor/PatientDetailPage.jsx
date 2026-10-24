@@ -14,7 +14,7 @@ import HealthReportRow from '../components/HealthReport'
 import SendPrescriptionPage from './SendPrescriptionPage'
 import RequestExamPage from './RequestExamPage'
 import { Page, PageHeader, Section, GroupLabel, PersonAvatar, Pill, RiskIcon, Sparkline, TextAction, RowButton } from '../components/ui'
-import { TONES, changeTone, changeLabel } from '../components/uiHelpers'
+import { TONES, changeTone, changeLabel, trendLabel, RANGE_FLAG_LABELS } from '../components/uiHelpers'
 import { ProcessingStatusChip } from '../components/DocumentProcessing'
 import { colors, cardShadow } from '../theme'
 import { getUserProfile } from '../services/profileService'
@@ -23,6 +23,7 @@ import { subscribeToConducts } from '../services/conductsService'
 import { getBiomarkersGrouped, getBiomarkerTypes, computeChange } from '../services/biomarkersService'
 import { getLatestRisks, riskTypeLabel, formatRiskValue, riskTone } from '../services/risksService'
 import { formatTimeAgo, calculateAge } from '../services/dateUtils'
+import { attentionFirst } from '../services/examReviewService'
 import { APPOINTMENT_STATUS, APPOINTMENT_MODES, upcomingAppointments, formatAppointmentDate } from '../services/appointmentsService'
 
 const INDICATOR_PREVIEW_COUNT = 5
@@ -115,11 +116,20 @@ export default function PatientDetailPage({ doctorUid, doctorProfile, patientUid
 
   const age = calculateAge(profile?.dateOfBirth)
   const results = (exams || []).filter((e) => e.kind === 'result').sort((a, b) => (b.submittedAt?.getTime() ?? 0) - (a.submittedAt?.getTime() ?? 0))
-  const toReview = results.filter((r) => r.doctorId === doctorUid && r.reviewStatus === 'not_reviewed')
+  const toReview = attentionFirst(results.filter((r) => r.doctorId === doctorUid && r.reviewStatus === 'not_reviewed'))
   const pastResults = results.filter((r) => !toReview.includes(r))
   const openRequests = (exams || []).filter((e) => e.kind !== 'result' && e.status !== 'realizado')
   const activeConducts = (conducts || []).filter((c) => c.status !== 'done')
   const nextAppointments = upcomingAppointments(appointments)
+  // The newest trend alert per biomarker, while that biomarker's latest
+  // reading still ends it (a later exam that broke the trend hides it).
+  const trendByType = {}
+  results.forEach((r) => (r.trendAlerts || []).forEach((t) => { trendByType[t.biomarkerType] ||= t }))
+  const currentTrend = (ind) => {
+    const t = trendByType[ind.key]
+    const lastDate = t?.values[t.values.length - 1]?.recordedAt
+    return lastDate && lastDate.toDateString() === ind.latest.recordedAt.toDateString() ? t : null
+  }
   const shownIndicators = showAllIndicators ? indicators || [] : (indicators || []).slice(0, INDICATOR_PREVIEW_COUNT)
 
   return (
@@ -203,15 +213,20 @@ export default function PatientDetailPage({ doctorUid, doctorProfile, patientUid
         {!indicators && <Box sx={{ px: 1.5, pb: 1.5 }}><Skeleton height={44} /><Skeleton height={44} /></Box>}
         {indicators && indicators.length === 0 && <Typography variant="body2" sx={{ color: colors.muted, px: 1.5, pb: 1.5 }}>Nenhum indicador registrado ainda.</Typography>}
         {shownIndicators.map((ind) => {
-          const tone = TONES[changeTone(ind.change)]
+          const trend = currentTrend(ind)
+          const tone = TONES[trend ? 'warn' : changeTone(ind.change)]
+          const flag = RANGE_FLAG_LABELS[ind.latest.flag]
           return (
             <Box key={ind.key} sx={{ display: 'flex', alignItems: 'center', gap: 1.5, px: 1.5, py: 1 }}>
               <Box sx={{ flexGrow: 1, minWidth: 0 }}>
                 <Typography variant="subtitle1" noWrap>{ind.label}</Typography>
-                <Typography variant="caption" sx={{ fontWeight: 700, color: tone.color }}>{ind.change ? changeLabel(ind.change) : formatTimeAgo(ind.latest.recordedAt)}</Typography>
+                <Typography variant="caption" sx={{ fontWeight: 700, color: tone.color }}>
+                  {trend ? `Tendência ${trendLabel(trend)}` : ind.change ? changeLabel(ind.change) : formatTimeAgo(ind.latest.recordedAt)}
+                </Typography>
+                {flag && <Typography variant="caption" sx={{ fontWeight: 700, color: colors.alert, display: 'block' }}>{flag}</Typography>}
               </Box>
               <Sparkline values={ind.values} width={64} height={24} color={tone.color} />
-              <Typography sx={{ fontWeight: 800, minWidth: 76, textAlign: 'right' }}>
+              <Typography sx={{ fontWeight: 800, minWidth: 76, textAlign: 'right', color: flag ? colors.alert : undefined }}>
                 {formatNumber(ind.latest.value)}<Box component="span" sx={{ fontSize: '0.6875rem', fontWeight: 600, color: colors.muted }}> {ind.unit}</Box>
               </Typography>
             </Box>

@@ -6,7 +6,7 @@ import TaskAltIcon from '@mui/icons-material/TaskAltRounded'
 import ReviewCard from './ReviewCard'
 import { Page, PageHeader, Segmented, GroupLabel, Section, RowButton, PersonAvatar, Pill, EmptyState } from '../components/ui'
 import { colors } from '../theme'
-import { groupByReviewStatus, filterByCategory } from '../services/examReviewService'
+import { groupByReviewStatus, filterByCategory, attentionFirst } from '../services/examReviewService'
 import { formatTimeAgo } from '../services/dateUtils'
 
 const CATEGORIES = [
@@ -39,7 +39,7 @@ export default function ExamesPage({ reviews, error, onOpenPatient }) {
               <EmptyState icon={<TaskAltIcon />} title="Tudo revisado">Nenhum resultado pendente nesta categoria.</EmptyState>
             </Section>
           ) : (
-            grouped.not_reviewed.map((r) => <ReviewCard key={r.id} review={r} onOpenPatient={onOpenPatient} />)
+            attentionFirst(grouped.not_reviewed).map((r) => <ReviewCard key={r.id} review={r} onOpenPatient={onOpenPatient} />)
           )}
 
           {grouped.reviewed.length > 0 && (

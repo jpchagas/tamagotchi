@@ -13,6 +13,7 @@ import { colors, cardShadow } from '../theme'
 import { getDoctorPatients } from '../services/careTeamService'
 import { getLatestRisksForPatients, riskTypeLabel } from '../services/risksService'
 import { APPOINTMENT_STATUS, isSameDay } from '../services/appointmentsService'
+import { attentionFirst } from '../services/examReviewService'
 
 const REVIEW_PREVIEW_COUNT = 3
 
@@ -60,7 +61,7 @@ export default function DoctorHomePage({ uid, profile, onLogout, reviews, appoin
     }
   }, [uid])
 
-  const pending = (reviews || []).filter((r) => r.reviewStatus === 'not_reviewed')
+  const pending = attentionFirst((reviews || []).filter((r) => r.reviewStatus === 'not_reviewed'))
   const highRiskPatients = new Set((highRisks || []).map((r) => r.patientId)).size
   const show = (n, ready) => (ready ? String(n) : '—')
   const todaysAppointments = (appointments || []).filter((a) => a.status !== 'cancelled' && a.startsAt && isSameDay(a.startsAt, new Date()))

@@ -12,6 +12,7 @@ import MedicationIcon from '@mui/icons-material/MedicationOutlined'
 import TaskAltIcon from '@mui/icons-material/TaskAltRounded'
 import ErrorIcon from '@mui/icons-material/ErrorOutlineRounded'
 import InsightsIcon from '@mui/icons-material/InsightsRounded'
+import WarningIcon from '@mui/icons-material/WarningAmberRounded'
 import IosShareIcon from '@mui/icons-material/IosShareRounded'
 import { BottomSheet, EmptyState } from './ui'
 import { TONES } from './uiHelpers'
@@ -28,6 +29,7 @@ const TYPE_STYLE = {
   result_failed: { icon: ErrorIcon, tone: 'alert' },
   result_reviewed: { icon: TaskAltIcon, tone: 'good' },
   result_submitted: { icon: ScienceIcon, tone: 'warn' },
+  result_attention: { icon: WarningIcon, tone: 'alert' },
 }
 
 function PushPrompt({ uid }) {

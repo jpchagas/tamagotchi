@@ -224,7 +224,7 @@ export default function PlanPage({ uid, appointments }) {
                       {r.attachmentUrl && (
                         <Button size="small" href={r.attachmentUrl} target="_blank" rel="noopener noreferrer" startIcon={<DescriptionIcon />} sx={{ minHeight: 36, px: 1 }}>Ver arquivo</Button>
                       )}
-                      <ExtractedDataPanel item={r} />
+                      <ExtractedDataPanel item={r} showReference={r.reviewStatus === 'reviewed'} />
                     </Box>
                   </Collapse>
                 </Box>

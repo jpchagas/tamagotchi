@@ -25,6 +25,8 @@ export const BIOMARKER_TYPES = [
   { key: 'egfr', label: 'eGFR', unit: 'mL/min/1,73m²', goodDirection: 'up' },
   { key: 'gorduraVisceral', label: 'Gordura visceral', unit: '%', goodDirection: 'down' },
   { key: 'sono', label: 'Sono', unit: 'min/noite', goodDirection: 'up' },
+  // No goodDirection: too low and too high are both a problem.
+  { key: 'ferritina', label: 'Ferritina', unit: 'ng/mL' },
 ]
 
 // [biomarkerType, value, monthsAgo]
@@ -39,6 +41,8 @@ export const SAMPLE_BIOMARKERS = [
   ['egfr', 96, 12], ['egfr', 94, 0],
   ['gorduraVisceral', 22, 2], ['gorduraVisceral', 20.2, 0],
   ['sono', 397, 2], ['sono', 360, 0],
+  // A falling trend still inside the reference range (see sampleExamResult).
+  ['ferritina', 180, 24], ['ferritina', 100, 12], ['ferritina', 80, 0],
 ]
 
 // DEMO VALUES ONLY — not the output of any real calculation.
@@ -68,6 +72,35 @@ export function sampleExams() {
     { title: 'Ressonância de crânio', status: 'solicitado', priority: 'rotina', icon: 'imaging', scheduledDate: daysFromNow(90) },
     { title: 'Hemograma completo', status: 'solicitado', priority: 'rotina', icon: 'blood', scheduledDate: daysFromNow(180) },
   ]
+}
+
+// A result waiting for the doctor's review, shaped like the Cloud Function's
+// output: one value above its reference range and a ferritin trend alert.
+// The values match the latest SAMPLE_BIOMARKERS. Emulator seed only (the
+// rules don't let a client write extraction fields).
+export function sampleExamResult() {
+  return {
+    title: 'Perfil lipídico + ferritina',
+    category: 'laboratorial',
+    submittedAt: daysFromNow(-1),
+    extractedValues: [
+      { biomarkerType: 'ldl', label: 'Colesterol LDL', value: 98, unit: 'mg/dL', refLow: null, refHigh: 100, refText: 'Inferior a 100 mg/dL', flag: 'normal' },
+      { biomarkerType: 'hdl', label: 'Colesterol HDL', value: 45, unit: 'mg/dL', refLow: 40, refHigh: null, refText: 'Superior a 40 mg/dL', flag: 'normal' },
+      { biomarkerType: 'apob', label: 'Apolipoproteína B', value: 98, unit: 'mg/dL', refLow: null, refHigh: 90, refText: 'Inferior a 90 mg/dL', flag: 'high' },
+      { biomarkerType: 'ferritina', label: 'Ferritina', value: 80, unit: 'ng/mL', refLow: 30, refHigh: 400, refText: '30 a 400 ng/mL', flag: 'normal' },
+    ],
+    trendAlerts: [
+      {
+        biomarkerType: 'ferritina',
+        label: 'Ferritina',
+        direction: 'down',
+        percent: -56,
+        count: 3,
+        unit: 'ng/mL',
+        values: [[180, 24], [100, 12], [80, 0]].map(([value, monthsAgo]) => ({ value, recordedAt: monthsAgoDate(monthsAgo) })),
+      },
+    ],
+  }
 }
 
 export function sampleConducts() {

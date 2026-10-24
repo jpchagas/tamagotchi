@@ -100,6 +100,9 @@ const LAB_RESULTS_SCHEMA = {
           value: { type: 'number', description: 'Valor numérico (vírgula decimal convertida para ponto)' },
           unit: { type: 'string' },
           collectedOn: { type: 'string', description: 'Data de coleta YYYY-MM-DD, se visível no laudo' },
+          refLow: { type: 'number', description: 'Limite inferior do valor de referência impresso no laudo, se houver' },
+          refHigh: { type: 'number', description: 'Limite superior do valor de referência impresso no laudo, se houver' },
+          refText: { type: 'string', description: 'Valor de referência como impresso no laudo, ex: "70 a 99 mg/dL" ou "inferior a 200"' },
         },
         required: ['metricKey', 'label', 'value'],
         additionalProperties: false,
@@ -171,6 +174,68 @@ function parseCollectedOn(value) {
   return Timestamp.fromDate(date)
 }
 
+function cleanNumber(value) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+// 'low' | 'high' | 'normal' against the range printed on the report, or
+// null when the report shows no usable range. Computed here rather than
+// asked of the model, so the flag always agrees with the numbers stored.
+function rangeFlag(value, refLow, refHigh) {
+  if (refLow === null && refHigh === null) return null
+  if (refLow !== null && value < refLow) return 'low'
+  if (refHigh !== null && value > refHigh) return 'high'
+  return 'normal'
+}
+
+// So the model picks the right range when the report prints one per sex
+// or age group.
+function patientContext(profile) {
+  const dob = profile?.dateOfBirth ? new Date(profile.dateOfBirth) : null
+  const age = dob && !isNaN(dob) ? Math.floor((Date.now() - dob.getTime()) / (365.25 * 24 * 60 * 60 * 1000)) : null
+  const parts = [profile?.sexAssignedAtBirth && `sexo ${profile.sexAssignedAtBirth.toLowerCase()}`, age && `${age} anos`].filter(Boolean)
+  if (parts.length === 0) return ''
+  return `\nPaciente: ${parts.join(', ')}. Se o laudo trouxer mais de uma faixa de referência, use a que se aplica a este paciente.`
+}
+
+// Trend alerts: the latest readings of a biomarker (one per day) each move
+// the same way and add up to a large change, e.g. ferritin 180 -> 100 -> 80.
+// Trends in the type's goodDirection (LDL falling on treatment) don't alert.
+const TREND_MIN_READINGS = 3
+const TREND_MIN_CHANGE_PERCENT = 20
+const TREND_MAX_VALUES = 6
+
+// readings: [{ value, unit, recordedAt (Timestamp) }] of one biomarker type.
+function detectTrend(readings, goodDirection) {
+  const byDay = new Map()
+  ;[...readings]
+    .sort((a, b) => a.recordedAt.toMillis() - b.recordedAt.toMillis())
+    .forEach((r) => byDay.set(r.recordedAt.toDate().toISOString().slice(0, 10), r)) // last of the day wins
+  const series = [...byDay.values()]
+  if (series.length < TREND_MIN_READINGS) return null
+
+  const last = series[series.length - 1]
+  const sameUnit = (r) => (r.unit || '').toLowerCase() === (last.unit || '').toLowerCase()
+  const step = (a, b) => (b.value < a.value ? 'down' : b.value > a.value ? 'up' : null)
+  const direction = step(series[series.length - 2], last)
+  if (!direction || direction === goodDirection) return null
+
+  let start = series.length - 1
+  while (start > 0 && sameUnit(series[start - 1]) && step(series[start - 1], series[start]) === direction) start--
+  const run = series.slice(start)
+  if (run.length < TREND_MIN_READINGS || run[0].value === 0) return null
+
+  const percent = ((last.value - run[0].value) / Math.abs(run[0].value)) * 100
+  if (Math.abs(percent) < TREND_MIN_CHANGE_PERCENT) return null
+  return {
+    direction,
+    percent: Math.round(percent),
+    count: run.length,
+    unit: last.unit || '',
+    values: run.slice(-TREND_MAX_VALUES).map((r) => ({ value: r.value, recordedAt: r.recordedAt })),
+  }
+}
+
 // Only creates a biomarker type if it doesn't exist yet — never
 // overwrites a curated label like "LDL" with a lab's "Colesterol LDL calculado".
 async function ensureBiomarkerType(key, label, unit) {
@@ -212,12 +277,17 @@ async function processExamRequest({ client, fileBuffer, contentType }) {
 async function processExamResult({ client, fileBuffer, contentType, patientUid, examId }) {
   // Give the model the existing biomarker keys so "Colesterol LDL" maps to
   // the existing "ldl" key instead of spawning a near-duplicate type.
-  const typesSnapshot = await db.collection('biomarkerTypes').get()
+  const [typesSnapshot, profileSnapshot] = await Promise.all([
+    db.collection('biomarkerTypes').get(),
+    db.doc(`users/${patientUid}`).get(),
+  ])
   const knownMetrics = typesSnapshot.docs.map((d) => ({ key: d.id, label: d.data().label, unit: d.data().unit }))
+  const types = Object.fromEntries(typesSnapshot.docs.map((d) => [d.id, d.data()]))
 
   const result = await extractWithClaude({
     client, fileBuffer, contentType, schema: LAB_RESULTS_SCHEMA,
     system: `Você extrai resultados numéricos de laudos laboratoriais brasileiros. ${BASE_RULES}
+Para cada resultado, copie também o valor de referência impresso no laudo: refLow e refHigh são os limites numéricos (omita o que não houver, ex: "inferior a 200" tem só refHigh = 200).${patientContext(profileSnapshot.data())}
 Métricas já conhecidas pelo sistema (reutilize a chave sempre que o exame corresponder):
 ${JSON.stringify(knownMetrics)}`,
     instruction: 'Extraia os resultados deste laudo.',
@@ -225,13 +295,22 @@ ${JSON.stringify(knownMetrics)}`,
 
   const readings = (result.readings || [])
     .filter((r) => typeof r.value === 'number' && Number.isFinite(r.value) && r.label)
-    .map((r) => ({
-      biomarkerType: safeMetricKey(r.metricKey, r.label),
-      label: cleanText(r.label, 120),
-      value: r.value,
-      unit: cleanText(r.unit, 30),
-      recordedAt: parseCollectedOn(r.collectedOn) || Timestamp.now(),
-    }))
+    .map((r) => {
+      let refLow = cleanNumber(r.refLow)
+      let refHigh = cleanNumber(r.refHigh)
+      if (refLow !== null && refHigh !== null && refLow > refHigh) refLow = refHigh = null
+      return {
+        biomarkerType: safeMetricKey(r.metricKey, r.label),
+        label: cleanText(r.label, 120),
+        value: r.value,
+        unit: cleanText(r.unit, 30),
+        recordedAt: parseCollectedOn(r.collectedOn) || Timestamp.now(),
+        refLow,
+        refHigh,
+        refText: cleanText(r.refText, 120),
+        flag: rangeFlag(r.value, refLow, refHigh),
+      }
+    })
 
   for (const r of readings) {
     await ensureBiomarkerType(r.biomarkerType, r.label, r.unit)
@@ -250,14 +329,36 @@ ${JSON.stringify(knownMetrics)}`,
       value: r.value,
       unit: r.unit,
       recordedAt: r.recordedAt,
+      refLow: r.refLow,
+      refHigh: r.refHigh,
+      flag: r.flag,
       source: 'exam',
       examId,
     })
   })
   await batch.commit()
 
+  // With this exam's readings saved, check each of its biomarkers against
+  // the patient's whole history (other exams and manual readings).
+  const history = await biomarkersCol.where('patientId', '==', patientUid).get()
+  const historyByType = {}
+  history.docs.forEach((d) => {
+    const { biomarkerType, value, unit, recordedAt } = d.data()
+    ;(historyByType[biomarkerType] ||= []).push({ value, unit, recordedAt })
+  })
+  const trendAlerts = [...new Set(readings.map((r) => r.biomarkerType))]
+    .map((key) => {
+      const trend = detectTrend(historyByType[key] || [], types[key]?.goodDirection)
+      const label = types[key]?.label || readings.find((r) => r.biomarkerType === key).label
+      return trend && { biomarkerType: key, label, ...trend }
+    })
+    .filter(Boolean)
+
   return {
-    extractedValues: readings.map(({ biomarkerType, label, value, unit }) => ({ biomarkerType, label, value, unit })),
+    extractedValues: readings.map(({ biomarkerType, label, value, unit, refLow, refHigh, refText, flag }) => ({
+      biomarkerType, label, value, unit, refLow, refHigh, refText, flag,
+    })),
+    trendAlerts,
   }
 }
 

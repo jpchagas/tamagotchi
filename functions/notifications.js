@@ -43,6 +43,18 @@ async function notify(id, { recipientId, type, title, body, target, actorName = 
 
 const listExams = (exam) => exam.title || 'exame'
 
+// Values outside the reference range printed on the report (functions/index.js).
+const outOfRange = (exam) => (exam.extractedValues || []).filter((v) => v.flag === 'low' || v.flag === 'high')
+
+// "Glicose acima da referência · Ferritina em queda (-56%) · +1"
+function attentionSummary(flagged, trends) {
+  const items = [
+    ...flagged.map((v) => `${v.label} ${v.flag === 'high' ? 'acima' : 'abaixo'} da referência`),
+    ...trends.map((t) => `${t.label} em ${t.direction === 'down' ? 'queda' : 'alta'} (${t.percent > 0 ? '+' : ''}${t.percent}%)`),
+  ]
+  return [...items.slice(0, 2), items.length > 2 && `+${items.length - 2}`].filter(Boolean).join(' · ')
+}
+
 // --- Exams & results -------------------------------------------------------
 
 exports.notifyExamCreated = onDocumentCreated({ document: 'exams/{examId}', region: REGION }, async (event) => {
@@ -95,6 +107,21 @@ exports.notifyExamUpdated = onDocumentUpdated({ document: 'exams/{examId}', regi
         : `${listExams(after)}: nenhum valor numérico encontrado`,
       target,
     })
+
+    // Out-of-range values and trends go to the doctor only; the patient
+    // sees the flags once the doctor has reviewed the result.
+    const flagged = outOfRange(after)
+    const trends = after.trendAlerts || []
+    if (after.doctorId && (flagged.length > 0 || trends.length > 0)) {
+      await notify(`exam_${examId}_attention`, {
+        recipientId: after.doctorId,
+        type: 'result_attention',
+        title: `Resultado com alterações: ${after.patientName || 'paciente'}`,
+        body: attentionSummary(flagged, trends),
+        target,
+        actorName: after.patientName,
+      })
+    }
   }
   if (before.processingStatus !== 'failed' && after.processingStatus === 'failed' && after.processingError !== 'upload_failed') {
     await notify(`exam_${examId}_failed`, {
@@ -107,11 +134,14 @@ exports.notifyExamUpdated = onDocumentUpdated({ document: 'exams/{examId}', regi
   }
 
   if (before.reviewStatus !== 'reviewed' && after.reviewStatus === 'reviewed') {
+    const flagged = outOfRange(after).length
     await notify(`exam_${examId}_reviewed`, {
       recipientId: after.patientId,
       type: 'result_reviewed',
       title: `${after.doctorName || 'Seu médico'} revisou seu exame`,
-      body: listExams(after),
+      body: flagged > 0
+        ? `${listExams(after)}: ${flagged} ${flagged > 1 ? 'valores fora' : 'valor fora'} da referência. Veja os detalhes no Plano.`
+        : listExams(after),
       target,
       actorName: after.doctorName,
     })

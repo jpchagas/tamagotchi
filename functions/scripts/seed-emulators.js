@@ -156,6 +156,23 @@ async function main() {
     })
   })
 
+  const result = demoData.sampleExamResult()
+  batch.set(db.collection('exams').doc(), {
+    ...result,
+    ...doctorFields,
+    patientId,
+    patientName: PATIENT.profile.fullName,
+    kind: 'result',
+    status: 'realizado',
+    priority: 'rotina',
+    icon: 'lab',
+    scheduledDate: toTimestamp(result.submittedAt),
+    submittedAt: toTimestamp(result.submittedAt),
+    reviewStatus: 'not_reviewed',
+    processingStatus: 'completed',
+    trendAlerts: result.trendAlerts.map((t) => ({ ...t, values: t.values.map((v) => ({ ...v, recordedAt: toTimestamp(v.recordedAt) })) })),
+  })
+
   demoData.sampleConducts().forEach((conduct) => {
     batch.set(db.collection('conducts').doc(), {
       ...conduct,

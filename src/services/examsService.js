@@ -16,7 +16,10 @@ export { formatRelativeDate } from './dateUtils'
 //         processingStatus ('pending' | 'processing' | 'completed' | 'failed'),
 //         processingError,
 //         requestedExams: [{ name, notes }]     (doctor's request PDF)
-//         extractedValues: [{ biomarkerType, label, value, unit }]  (patient's result)
+//         extractedValues: [{ biomarkerType, label, value, unit,   (patient's result)
+//                             refLow, refHigh, refText, flag ('low' | 'high' | 'normal' | null) }]
+//         trendAlerts: [{ biomarkerType, label, direction ('down' | 'up'), percent,
+//                         count, unit, values: [{ value, recordedAt }] }]  (doctor only)
 
 export function toExam(d) {
   const data = d.data()
@@ -25,6 +28,10 @@ export function toExam(d) {
     ...data,
     scheduledDate: data.scheduledDate?.toDate?.() || null,
     submittedAt: data.submittedAt?.toDate?.() || null,
+    trendAlerts: (data.trendAlerts || []).map((t) => ({
+      ...t,
+      values: (t.values || []).map((v) => ({ ...v, recordedAt: v.recordedAt?.toDate?.() || null })),
+    })),
   }
 }
 

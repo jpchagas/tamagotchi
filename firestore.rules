@@ -34,7 +34,7 @@ service cloud.firestore {
     // client marking a still-pending upload as failed (mark*UploadFailed).
     function processingUntouched() {
       return !changed().hasAny(['processingStatus', 'processingError', 'processedAt',
-                                'medications', 'requestedExams', 'extractedValues']);
+                                'medications', 'requestedExams', 'extractedValues', 'trendAlerts']);
     }
 
     function markingUploadFailed() {
@@ -49,7 +49,7 @@ service cloud.firestore {
     function validNewProcessing() {
       let data = request.resource.data;
       return (!('processingStatus' in data) || data.processingStatus == 'pending')
-        && !data.keys().hasAny(['processingError', 'processedAt', 'medications', 'requestedExams', 'extractedValues']);
+        && !data.keys().hasAny(['processingError', 'processedAt', 'medications', 'requestedExams', 'extractedValues', 'trendAlerts']);
     }
 
     function ownersUnchanged() {

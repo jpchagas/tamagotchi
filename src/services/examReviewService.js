@@ -74,6 +74,26 @@ export async function getPatientIdsWithPendingReview(doctorId) {
   return new Set(reviews.filter((r) => r.reviewStatus === 'not_reviewed').map((r) => r.patientId))
 }
 
+// A value outside the reference range printed on the report (the Cloud
+// Function sets `flag`; older results have none).
+export function isOutOfRange(value) {
+  return value.flag === 'low' || value.flag === 'high'
+}
+
+export function outOfRangeValues(exam) {
+  return (exam.extractedValues || []).filter(isOutOfRange)
+}
+
+// Out-of-range values or a trend alert: the doctor should look first.
+export function needsAttention(exam) {
+  return outOfRangeValues(exam).length > 0 || (exam.trendAlerts || []).length > 0
+}
+
+// Results needing attention first, otherwise in the given order.
+export function attentionFirst(reviews) {
+  return [...reviews].sort((a, b) => needsAttention(b) - needsAttention(a))
+}
+
 export function groupByReviewStatus(reviews) {
   return reviews.reduce(
     (acc, r) => {

@@ -2,7 +2,9 @@ import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
 import CircularProgress from '@mui/material/CircularProgress'
 import { Pill } from './ui'
+import { formatMeasurement, formatRange, RANGE_FLAG_LABELS } from './uiHelpers'
 import { colors } from '../theme'
+import { isOutOfRange } from '../services/examReviewService'
 
 // Shared by patient (PlanPage) and doctor (ExamesPage, PatientDetailPage)
 // screens so a document reads the same way on both sides.
@@ -43,15 +45,15 @@ function Section({ title, children }) {
   )
 }
 
-function Row({ primary, secondary, trailing }) {
+function Row({ primary, secondary, trailing, alert }) {
   return (
     <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 1, py: 0.5 }}>
       <Box sx={{ minWidth: 0 }}>
         <Typography variant="body2" sx={{ fontWeight: 600 }}>{primary}</Typography>
-        {secondary && <Typography variant="caption" sx={{ color: colors.muted }}>{secondary}</Typography>}
+        {secondary && <Typography variant="caption" sx={{ color: alert ? colors.alert : colors.muted, display: 'block' }}>{secondary}</Typography>}
       </Box>
       {trailing && (
-        <Typography variant="body2" sx={{ fontWeight: 800, whiteSpace: 'nowrap' }}>{trailing}</Typography>
+        <Typography variant="body2" sx={{ fontWeight: 800, whiteSpace: 'nowrap', color: alert ? colors.alert : undefined }}>{trailing}</Typography>
       )}
     </Box>
   )
@@ -60,7 +62,9 @@ function Row({ primary, secondary, trailing }) {
 // Renders whatever the Cloud Function extracted for this item — medications
 // (prescription), requestedExams (exam request) or extractedValues (result).
 // Shows nothing while the item has no attached document.
-export function ExtractedDataPanel({ item }) {
+// showReference: reference ranges and out-of-range flags on the values; the
+// patient only gets them once the doctor has reviewed the result.
+export function ExtractedDataPanel({ item, showReference = true }) {
   const status = item.processingStatus
   if (!status) return null
 
@@ -105,9 +109,24 @@ export function ExtractedDataPanel({ item }) {
       )}
       {extractedValues.length > 0 && (
         <Section title="Valores identificados">
-          {extractedValues.map((v, i) => (
-            <Row key={i} primary={v.label} trailing={`${String(v.value).replace('.', ',')}${v.unit ? ` ${v.unit}` : ''}`} />
-          ))}
+          {showReference && extractedValues.some(isOutOfRange) && (
+            <Typography variant="caption" sx={{ color: colors.muted, display: 'block', mb: 0.5 }}>
+              Valores fora da referência estão destacados. Converse com seu médico sobre eles.
+            </Typography>
+          )}
+          {extractedValues.map((v, i) => {
+            const flagged = showReference && isOutOfRange(v)
+            const range = showReference ? formatRange(v) : ''
+            return (
+              <Row
+                key={i}
+                primary={v.label}
+                secondary={[range && `Ref.: ${range}`, flagged && RANGE_FLAG_LABELS[v.flag]].filter(Boolean).join(' · ')}
+                trailing={`${flagged ? (v.flag === 'high' ? '↑ ' : '↓ ') : ''}${formatMeasurement(v.value, v.unit)}`}
+                alert={flagged}
+              />
+            )
+          })}
         </Section>
       )}
     </>

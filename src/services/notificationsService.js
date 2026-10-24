@@ -6,7 +6,7 @@ import { db } from '../firebase'
 // Fields: recipientId, type, title, body, actorName, read, createdAt,
 //         target: { kind: 'exam' | 'conduct', id, patientId }
 // type: 'exam_requested' | 'conduct_created' | 'result_read' | 'result_failed'
-//       | 'result_reviewed' (patient) — 'result_submitted' (doctor)
+//       | 'result_reviewed' (patient) — 'result_submitted' | 'result_attention' (doctor)
 
 // Only the newest are shown; older ones stay in Firestore.
 const MAX_SHOWN = 60

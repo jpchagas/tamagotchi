@@ -20,7 +20,8 @@ export async function saveBiomarkerType(key, { label, unit, goodDirection }) {
 // Fields: patientId, biomarkerType (a biomarkerTypes key), value, unit,
 //         recordedAt, source ('exam' | 'manual'),
 //         examId (when source is 'exam'; the Cloud Function writes these
-//         with id `{examId}_{i}`)
+//         with id `{examId}_{i}`), and from exams also refLow, refHigh,
+//         flag ('low' | 'high' | 'normal' | null — against the report's range)
 
 export async function addBiomarker(patientId, { biomarkerType, value, unit = '', recordedAt = new Date(), source = 'manual' }) {
   await addDoc(collection(db, 'biomarkers'), {
@@ -43,7 +44,7 @@ export async function getBiomarkersGrouped(patientId) {
   snapshot.docs.forEach((d) => {
     const data = d.data()
     if (!grouped[data.biomarkerType]) grouped[data.biomarkerType] = []
-    grouped[data.biomarkerType].push({ id: d.id, value: data.value, unit: data.unit, recordedAt: data.recordedAt.toDate() })
+    grouped[data.biomarkerType].push({ id: d.id, value: data.value, unit: data.unit, recordedAt: data.recordedAt.toDate(), flag: data.flag || null })
   })
   Object.values(grouped).forEach((list) => list.sort((a, b) => a.recordedAt - b.recordedAt))
   return grouped

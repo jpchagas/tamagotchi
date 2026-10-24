@@ -83,9 +83,11 @@ const KINDS = {
     },
   },
   examResult: {
-    // The real prompt also lists the metric definitions from Firestore,
-    // which adds a few hundred tokens that this count leaves out.
-    system: `Você extrai resultados numéricos de laudos laboratoriais brasileiros. ${BASE_RULES}`,
+    // The real prompt also lists the metric definitions from Firestore and
+    // the patient's sex and age, which add a few hundred tokens that this
+    // count leaves out.
+    system: `Você extrai resultados numéricos de laudos laboratoriais brasileiros. ${BASE_RULES}
+Para cada resultado, copie também o valor de referência impresso no laudo: refLow e refHigh são os limites numéricos (omita o que não houver, ex: "inferior a 200" tem só refHigh = 200).`,
     instruction: 'Extraia os resultados deste laudo.',
     schema: {
       type: 'object',
@@ -103,6 +105,9 @@ const KINDS = {
               value: { type: 'number', description: 'Valor numérico (vírgula decimal convertida para ponto)' },
               unit: { type: 'string' },
               collectedOn: { type: 'string', description: 'Data de coleta YYYY-MM-DD, se visível no laudo' },
+              refLow: { type: 'number', description: 'Limite inferior do valor de referência impresso no laudo, se houver' },
+              refHigh: { type: 'number', description: 'Limite superior do valor de referência impresso no laudo, se houver' },
+              refText: { type: 'string', description: 'Valor de referência como impresso no laudo, ex: "70 a 99 mg/dL" ou "inferior a 200"' },
             },
             required: ['metricKey', 'label', 'value'],
             additionalProperties: false,
