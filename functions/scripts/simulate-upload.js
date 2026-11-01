@@ -91,9 +91,9 @@ async function main() {
   console.log('Waiting for processUploadedFile...')
 
   const data = await waitForResult(ref)
-  const { medications, requestedExams, extractedValues, processingStatus, processingError } = data
+  const { medications, requestedExams, extractedValues, processingStatus, processingError, trendAlerts } = data
   console.log('\nResult:')
-  console.log(JSON.stringify({ processingStatus, processingError, medications, requestedExams, extractedValues }, null, 2))
+  console.log(JSON.stringify({ processingStatus, processingError, medications, requestedExams, extractedValues, trendAlerts }, null, 2))
 
   if (kind === 'examResult') {
     const biomarkers = await db.collection('biomarkers').where('examId', '==', ref.id).get()

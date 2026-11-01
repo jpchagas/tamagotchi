@@ -32,6 +32,7 @@ firebase deploy --only functions    # needs ANTHROPIC_API_KEY secret; optional E
 npm run emulators                                   # Auth + Functions + Firestore + Storage emulators, project demo-tamagotchi, UI on :4000 (push is logged, not sent)
 npm run seed                                        # resets the emulators; users local-patient/local-doctor (paciente@local.test / medico@local.test, password local123) + demo data
 npm run simulate -- examResult path/to/laudo.pdf    # or prescription | examRequest; creates the pending doc, uploads, prints the result
+npm run test-reports                                # fictional lab PDFs (range flags, B12 trend) in scripts/fixtures/; manual test guide: docs/TESTING_EXAM_ALERTS.md
 
 # App against the emulators (repo root): VITE_USE_EMULATORS=true switches src/firebase.js to project demo-tamagotchi + local emulators
 npm run dev:emulators

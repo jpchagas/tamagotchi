@@ -6,7 +6,8 @@
     "emulators": "firebase emulators:start --config ../firebase.local.json --project demo-tamagotchi",
     "seed": "node scripts/seed-emulators.js",
     "simulate": "node scripts/simulate-upload.js",
-    "count-tokens": "node scripts/count-tokens.js"
+    "count-tokens": "node scripts/count-tokens.js",
+    "test-reports": "node scripts/make-test-reports.mjs"
   },
   "engines": {
     "node": "22"

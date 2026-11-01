@@ -115,7 +115,8 @@ async function main() {
   const units = {}
   demoData.BIOMARKER_TYPES.forEach(({ key, label, unit, goodDirection }) => {
     units[key] = unit
-    batch.set(db.doc(`biomarkerTypes/${key}`), { label, unit, goodDirection })
+    // Some types have no goodDirection (ferritina), and Firestore rejects undefined.
+    batch.set(db.doc(`biomarkerTypes/${key}`), { label, unit, ...(goodDirection && { goodDirection }) })
   })
 
   demoData.SAMPLE_BIOMARKERS.forEach(([biomarkerType, value, monthsAgo]) => {

@@ -19,13 +19,14 @@ const RANGES = [
 const formatNumber = (v) => (Number.isInteger(v) ? String(v) : v.toFixed(2).replace(/0+$/, '').replace('.', ','))
 const shortDate = (t) => new Date(t).toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' }).replace('.', '')
 
-function inRange(readings, months) {
+// Only the readings inside the period. The cutoff is the start of that day,
+// so "6M" includes a reading taken exactly six months ago.
+function inPeriod(readings, months) {
   if (!months) return readings
   const cutoff = new Date()
   cutoff.setMonth(cutoff.getMonth() - months)
-  const filtered = readings.filter((r) => r.recordedAt >= cutoff)
-  // Keep at least the last two points so there is always a trend to show.
-  return filtered.length >= 2 ? filtered : readings.slice(-2)
+  cutoff.setHours(0, 0, 0, 0)
+  return readings.filter((r) => r.recordedAt >= cutoff)
 }
 
 // First-to-last change over the selected range (not just the last step).
@@ -43,7 +44,7 @@ function rangeChange(readings, goodDirection) {
 }
 
 function trendText(change) {
-  if (!change) return 'Uma medição até agora'
+  if (!change) return 'Uma medição no período'
   if (change.direction === 'flat') return 'Estável'
   const pct = Math.abs(Math.round(change.percent))
   const verdict = change.improving === null ? '' : change.improving ? ' · melhorou' : ' · piorou'
@@ -91,10 +92,13 @@ export default function EvolutionPage({ uid, initialFocus }) {
   }, [uid])
 
   const months = RANGES.find((r) => r.value === range).months
-  const rows = (biomarkers || []).map((b) => {
-    const readings = inRange(b.readings, months)
-    return { ...b, readings, change: rangeChange(readings, b.goodDirection) }
-  })
+  // Biomarkers not measured in the period are left out.
+  const rows = (biomarkers || [])
+    .map((b) => {
+      const readings = inPeriod(b.readings, months)
+      return { ...b, readings, change: rangeChange(readings, b.goodDirection) }
+    })
+    .filter((b) => b.readings.length > 0)
   const focused = rows.find((r) => r.key === focus) || rows[0]
   const focusedTone = TONES[changeTone(focused?.change)]
   const chartData = focused ? focused.readings.map((r) => ({ t: r.recordedAt.getTime(), v: r.value })) : []
@@ -110,6 +114,12 @@ export default function EvolutionPage({ uid, initialFocus }) {
       {biomarkers && biomarkers.length === 0 && (
         <EmptyState icon={<ShowChartIcon />} title="Nenhum indicador ainda">
           Eles aparecem aqui quando você envia resultados de exames.
+        </EmptyState>
+      )}
+
+      {biomarkers && biomarkers.length > 0 && rows.length === 0 && (
+        <EmptyState icon={<ShowChartIcon />} title="Nenhuma medição neste período">
+          Escolha um período maior para ver seus indicadores.
         </EmptyState>
       )}
 

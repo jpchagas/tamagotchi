@@ -144,3 +144,6 @@ vite.config.ts.timestamp-*
 
 # Local Cloud Functions secrets (emulator), e.g. ANTHROPIC_API_KEY
 .secret.local
+
+# Generated test lab reports (functions/scripts/make-test-reports.mjs)
+functions/scripts/fixtures/
